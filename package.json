@@ -1,0 +1,14 @@
+{
+  "name": "titan",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Digital adaptation of the Avalon Hill board game Titan. Monorepo: pure rules engine, shared protocol, React+PixiJS client, Supabase backend.",
+  "scripts": {
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "engines": {
+    "node": ">=22.6.0"
+  },
+  "packageManager": "pnpm@9.0.0"
+}

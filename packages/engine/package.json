@@ -1,0 +1,15 @@
+{
+  "name": "@titan/engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Pure, deterministic Titan rules engine. No DOM, no I/O, no dependencies. Runs identically in the browser, Node, and Deno (Supabase Edge Functions).",
+  "exports": {
+    ".": "./src/index.ts",
+    "./hex": "./src/hex/index.ts"
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}
