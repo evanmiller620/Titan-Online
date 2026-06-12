@@ -80,8 +80,8 @@ supabase/           migrations (RLS boundary: legion_contents table),
 | # | Module | Status |
 |---|--------|--------|
 | 1 | `engine/hex` — cube math, line/LOS, movement BFS | ✅ done, 39 tests |
-| 2 | `engine/core/fsm` — generic nested FSM + Game/Battle machines | next |
-| 3 | `engine/state` + command skeleton | planned |
+| 2 | `engine/core/fsm` — generic nested FSM + Game/Battle machines | ✅ done, 37 tests |
+| 3 | `engine/state` + command skeleton | next |
 | 4 | `engine/masterboard` — 96-land graph + movement | planned |
 | 5 | `engine/creatures` + recruitment trees | planned |
 | 6 | `engine/battleland` — maps, hazards, entry | planned |
