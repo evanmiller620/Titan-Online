@@ -76,6 +76,19 @@ confirmed these choices:
   (96 lands, no dangling exits, distinct cubes, ring populations, summit is a
   one-way refuge), so a bad transcription would fail CI rather than ship.
 
+- **Creatures and recruit trees are sourced from Colossus too.**
+  `creatures/stats.data.ts` and `creatures/recruitment.data.ts` are mechanical
+  conversions of `DefaultCre.xml` and `DefaultTer.xml`. The 24 creature stat
+  blocks cross-check against the caretaker limits independently encoded in
+  module 3 (zero mismatch), and the recruit chains are validated against the
+  canonical masterchart relationships (e.g. Plains 2 Centaurs→Lion, Jungle
+  3 Cyclops→Behemoth). Recruitment is one-step-per-move along each terrain's
+  weakest→strongest chain; Tower mustering (Centaur/Gargoyle/Ogre by anyone,
+  Warlock via Titan-or-Warlock, Guardian via three-identical-or-Guardian) and
+  the Angel@100 / Archangel@500 acquirables are modelled per the rules. The
+  Titan's power is stored as a -1 sentinel and computed as 6 + floor(score/100)
+  via powerOf(), never read raw.
+
 ## Workspace layout
 
 ```
@@ -94,8 +107,8 @@ supabase/           migrations (RLS boundary: legion_contents table),
 | 2 | `engine/core/fsm` — generic nested FSM + Game/Battle machines | ✅ done, 37 tests |
 | 3 | `engine/state` + commands, events, rng — setup & turn flow playable | ✅ done, 27 tests |
 | 4 | `engine/masterboard` — 96-land directed graph, movement, teleports | ✅ done, 24 tests |
-| 5 | `engine/creatures` + recruitment trees | next |
-| 6 | `engine/battleland` — maps, hazards, entry | planned |
+| 5 | `engine/creatures` — stats, recruit trees, Muster command | ✅ done, 25 tests |
+| 6 | `engine/battleland` — maps, hazards, entry | next |
 | 7 | `engine/combat` — strikes, carry, rangestrike | planned |
 | 8 | Supabase schema + RLS + submit-command | planned |
 | 9 | Client | planned |

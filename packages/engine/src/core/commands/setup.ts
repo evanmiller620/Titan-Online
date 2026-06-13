@@ -188,6 +188,7 @@ export class SelectColorCommand extends BaseCommand<SelectColorPayload> {
       creatures: [...INITIAL_LEGION],
       moved: false,
       splitThisTurn: false,
+      recruitedThisTurn: false,
     };
     for (const c of INITIAL_LEGION) {
       draft.caretaker[c] = draft.caretaker[c] - 1;

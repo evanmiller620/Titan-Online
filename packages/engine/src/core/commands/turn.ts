@@ -135,6 +135,7 @@ export class SplitLegionCommand extends BaseCommand<SplitLegionPayload> {
       creatures: childCreatures,
       moved: false,
       splitThisTurn: true,
+      recruitedThisTurn: false,
     };
 
     const player = draft.players[this.playerId]!;
@@ -334,7 +335,7 @@ export class EndTurnCommand extends BaseCommand<Record<string, never>> {
 
     // Per-turn legion flags reset for everyone.
     for (const [id, legion] of Object.entries(draft.legions)) {
-      draft.legions[id] = { ...legion, moved: false, splitThisTurn: false };
+      draft.legions[id] = { ...legion, moved: false, splitThisTurn: false, recruitedThisTurn: false };
     }
 
     events.push({

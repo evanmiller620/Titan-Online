@@ -58,6 +58,10 @@ export interface LegionState {
   /** Was created by / produced a split this turn (one split per legion per
    *  turn; reset at turn end). */
   readonly splitThisTurn: boolean;
+  /** Mustered a recruit this turn (one recruit per legion per turn; reset at
+   *  turn end). Also true for legions that began the turn 7 high — they may
+   *  not recruit at all. */
+  readonly recruitedThisTurn: boolean;
 }
 
 /** Setup-phase bookkeeping; null once the game proper begins. */

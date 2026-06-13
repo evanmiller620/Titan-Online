@@ -117,6 +117,21 @@ export interface LegionMoved extends EventBase {
   readonly teleport: boolean;
 }
 
+export interface CreatureRecruited extends EventBase {
+  readonly type: "CreatureRecruited";
+  readonly playerId: PlayerId;
+  readonly legionId: LegionId;
+  readonly land: LandId;
+  readonly newHeight: number;
+}
+
+export interface CreatureRecruitedDetail extends EventBase {
+  readonly type: "CreatureRecruitedDetail";
+  readonly playerId: PlayerId;
+  readonly legionId: LegionId;
+  readonly creature: CreatureName;
+}
+
 export interface TurnEnded extends EventBase {
   readonly type: "TurnEnded";
   readonly endedByPlayerId: PlayerId;
@@ -134,6 +149,8 @@ export type DomainEvent =
   | LegionSplitDetail
   | MovementRolled
   | LegionMoved
+  | CreatureRecruited
+  | CreatureRecruitedDetail
   | TurnEnded;
 
 /** Filter an event stream down to what one player may legally see. */

@@ -31,6 +31,7 @@ import {
   TowerTeleportCommand,
   TitanTeleportCommand,
 } from "./movement.ts";
+import { MusterCommand } from "./mustering.ts";
 
 export class UnknownCommandError extends Error {
   constructor(type: string) {
@@ -74,6 +75,7 @@ register(EndTurnCommand.TYPE, EndTurnCommand);
 register(MoveLegionCommand.TYPE, MoveLegionCommand);
 register(TowerTeleportCommand.TYPE, TowerTeleportCommand);
 register(TitanTeleportCommand.TYPE, TitanTeleportCommand);
+register(MusterCommand.TYPE, MusterCommand);
 
 export const COMMAND_TYPES: readonly string[] = [...REGISTRY.keys()];
 
