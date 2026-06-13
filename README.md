@@ -89,6 +89,22 @@ confirmed these choices:
   Titan's power is stored as a -1 sentinel and computed as 6 + floor(score/100)
   via powerOf(), never read raw.
 
+- **Battlelands are sourced and geometry-verified.** `battleland/maps.data.ts`
+  is the mechanical conversion of all eleven Colossus battle-map XMLs, each
+  expanded to the full 27 hexes (six flat-top columns A-F, heights 3/4/5/6/5/4).
+  Two geometry claims were *derived and proven*, not assumed: the odd-q cube
+  embedding gives physically-correct adjacency (verified against the Tower's
+  wall ring around pinnacle D4), and the Colossus hexside `number` equals
+  module 1's DIRECTIONS index exactly (the identity permutation, solved from
+  the Tower wall geometry). Hazards (Tree/Volcano impassable, Bog natives-only,
+  Brambles/Sand/Drift slow non-natives) and hexside features (walls and cliffs
+  block ground, slopes/dunes slow uphill non-natives, all symmetric across the
+  shared edge) compose into module 1's MovementRules so the pure cube
+  pathfinder drives battle movement unchanged. LOS reuses module 1's dual-ray
+  algorithm with Tree/Volcano/occupancy blockers. Entry sides follow Law of
+  Titan §10: attacker on the matching 4-wide side, defender on the opposite
+  3-wide side, Tower deploying inside the walls.
+
 ## Workspace layout
 
 ```
@@ -108,8 +124,8 @@ supabase/           migrations (RLS boundary: legion_contents table),
 | 3 | `engine/state` + commands, events, rng — setup & turn flow playable | ✅ done, 27 tests |
 | 4 | `engine/masterboard` — 96-land directed graph, movement, teleports | ✅ done, 24 tests |
 | 5 | `engine/creatures` — stats, recruit trees, Muster command | ✅ done, 25 tests |
-| 6 | `engine/battleland` — maps, hazards, entry | next |
-| 7 | `engine/combat` — strikes, carry, rangestrike | planned |
+| 6 | `engine/battleland` — 11 maps, hazards, LOS, entry sides | ✅ done, 25 tests |
+| 7 | `engine/combat` — strikes, carry, rangestrike | next |
 | 8 | Supabase schema + RLS + submit-command | planned |
 | 9 | Client | planned |
 
