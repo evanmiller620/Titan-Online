@@ -41,6 +41,27 @@ import {
 } from "../src/core/commands/registry.ts";
 import { visibleTo, type DomainEvent } from "../src/core/events/DomainEvent.ts";
 import { CARETAKER_LIMITS } from "../src/creatures/names.ts";
+import { MoveLegionCommand } from "../src/core/commands/movement.ts";
+import { destinationsForRoll } from "../src/masterboard/movement.ts";
+
+/** Move every legion the active player owns to a distinct legal destination,
+ *  satisfying the "must move if able" rule. Assumes movement already rolled. */
+function moveAllActiveLegions(state: GameState): GameState {
+  let s = state;
+  const roll = s.turn.movementRoll!;
+  const activeId = s.playerOrder[s.turn.activeIndex]!;
+  const used = new Set<number>();
+  for (const legion of Object.values(s.legions)) {
+    if (legion.ownerId !== activeId || legion.moved) continue;
+    const dest = destinationsForRoll(legion.land, roll)
+      .map((r) => r.destination)
+      .find((d) => !used.has(d));
+    if (dest === undefined) continue;
+    used.add(dest);
+    s = exec(s, new MoveLegionCommand(activeId, { legionId: legion.marker, destination: dest })).state;
+  }
+  return s;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -393,6 +414,7 @@ describe("movement phase and turn rotation", () => {
   it("ending movement with no engagements auto-skips to Mustering", () => {
     let s = atMovement();
     s = exec(s, new RollMovementCommand("p1", {}), scriptedRng([4])).state;
+    s = moveAllActiveLegions(s);
     assert.deepEqual(pendingEngagements(s), []);
     const { state, events } = exec(s, new EndMovementCommand("p1", {}));
     assert.equal(state.fsm.path, "Turn.Mustering");
@@ -404,6 +426,7 @@ describe("movement phase and turn rotation", () => {
   it("ending the turn rotates the active player and resets per-turn flags", () => {
     let s = atMovement();
     s = exec(s, new RollMovementCommand("p1", {}), scriptedRng([4])).state;
+    s = moveAllActiveLegions(s);
     s = exec(s, new EndMovementCommand("p1", {})).state;
     const { state } = exec(s, new EndTurnCommand("p1", {}));
     assert.equal(state.fsm.path, "Turn.Commencement");
@@ -421,12 +444,14 @@ describe("movement phase and turn rotation", () => {
     // so each must split first (turn.number is still 1 for them).
     let s = atMovement();
     s = exec(s, new RollMovementCommand("p1", {}), scriptedRng([4])).state;
+    s = moveAllActiveLegions(s);
     s = exec(s, new EndMovementCommand("p1", {})).state;
     s = exec(s, new EndTurnCommand("p1", {})).state;
     for (const [pid, color] of [["p2", "Blue"], ["p3", "Red"]] as const) {
       s = exec(s, initialSplit(pid, color)).state;
       s = exec(s, new EndSplitsCommand(pid, {})).state;
       s = exec(s, new RollMovementCommand(pid, {}), scriptedRng([3])).state;
+      s = moveAllActiveLegions(s);
       s = exec(s, new EndMovementCommand(pid, {})).state;
       s = exec(s, new EndTurnCommand(pid, {})).state;
     }
@@ -438,12 +463,14 @@ describe("movement phase and turn rotation", () => {
     // Get p1 to turn 2 commencement via the wrap above.
     let s = atMovement();
     s = exec(s, new RollMovementCommand("p1", {}), scriptedRng([4])).state;
+    s = moveAllActiveLegions(s);
     s = exec(s, new EndMovementCommand("p1", {})).state;
     s = exec(s, new EndTurnCommand("p1", {})).state;
     for (const [pid, color] of [["p2", "Blue"], ["p3", "Red"]] as const) {
       s = exec(s, initialSplit(pid, color)).state;
       s = exec(s, new EndSplitsCommand(pid, {})).state;
       s = exec(s, new RollMovementCommand(pid, {}), scriptedRng([3])).state;
+      s = moveAllActiveLegions(s);
       s = exec(s, new EndMovementCommand(pid, {})).state;
       s = exec(s, new EndTurnCommand(pid, {})).state;
     }

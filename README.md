@@ -65,6 +65,17 @@ confirmed these choices:
   the Board") shaped the data-file format — terrain/hazard tables and recruit
   trees are data, not code, so variants are new data files.
 
+- **Masterboard data is sourced, not invented.** `masterboard/board.data.ts`
+  was mechanically converted from the Colossus project's `DefaultMap.xml`
+  (the community reference implementation), not transcribed by hand. Land ids
+  follow that scheme: Towers 100–600, outer/middle tracks 1–42, tower-ring
+  lands 101–142, central summit 1000–6000. Exit signs (ARROWS/ARROW/ARCH/
+  BLOCK) are preserved verbatim and drive a directed movement graph; cube
+  coordinates are a faithful spatial embedding used only for rendering, never
+  for movement legality. The conversion is re-checked by invariant tests
+  (96 lands, no dangling exits, distinct cubes, ring populations, summit is a
+  one-way refuge), so a bad transcription would fail CI rather than ship.
+
 ## Workspace layout
 
 ```
@@ -82,8 +93,8 @@ supabase/           migrations (RLS boundary: legion_contents table),
 | 1 | `engine/hex` — cube math, line/LOS, movement BFS | ✅ done, 39 tests |
 | 2 | `engine/core/fsm` — generic nested FSM + Game/Battle machines | ✅ done, 37 tests |
 | 3 | `engine/state` + commands, events, rng — setup & turn flow playable | ✅ done, 27 tests |
-| 4 | `engine/masterboard` — 96-land graph + movement | next |
-| 5 | `engine/creatures` + recruitment trees | planned |
+| 4 | `engine/masterboard` — 96-land directed graph, movement, teleports | ✅ done, 24 tests |
+| 5 | `engine/creatures` + recruitment trees | next |
 | 6 | `engine/battleland` — maps, hazards, entry | planned |
 | 7 | `engine/combat` — strikes, carry, rangestrike | planned |
 | 8 | Supabase schema + RLS + submit-command | planned |

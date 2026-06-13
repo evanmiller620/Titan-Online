@@ -26,6 +26,11 @@ import {
   SplitLegionCommand,
   TakeMulliganCommand,
 } from "./turn.ts";
+import {
+  MoveLegionCommand,
+  TowerTeleportCommand,
+  TitanTeleportCommand,
+} from "./movement.ts";
 
 export class UnknownCommandError extends Error {
   constructor(type: string) {
@@ -66,6 +71,9 @@ register(RollMovementCommand.TYPE, RollMovementCommand);
 register(TakeMulliganCommand.TYPE, TakeMulliganCommand);
 register(EndMovementCommand.TYPE, EndMovementCommand);
 register(EndTurnCommand.TYPE, EndTurnCommand);
+register(MoveLegionCommand.TYPE, MoveLegionCommand);
+register(TowerTeleportCommand.TYPE, TowerTeleportCommand);
+register(TitanTeleportCommand.TYPE, TitanTeleportCommand);
 
 export const COMMAND_TYPES: readonly string[] = [...REGISTRY.keys()];
 

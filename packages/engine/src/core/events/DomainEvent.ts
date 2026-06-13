@@ -108,6 +108,15 @@ export interface MovementRolled extends EventBase {
   readonly mulligan: boolean;
 }
 
+export interface LegionMoved extends EventBase {
+  readonly type: "LegionMoved";
+  readonly playerId: PlayerId;
+  readonly legionId: LegionId;
+  readonly from: LandId;
+  readonly to: LandId;
+  readonly teleport: boolean;
+}
+
 export interface TurnEnded extends EventBase {
   readonly type: "TurnEnded";
   readonly endedByPlayerId: PlayerId;
@@ -124,6 +133,7 @@ export type DomainEvent =
   | LegionSplit
   | LegionSplitDetail
   | MovementRolled
+  | LegionMoved
   | TurnEnded;
 
 /** Filter an event stream down to what one player may legally see. */

@@ -39,6 +39,7 @@ import {
   pendingEngagements,
   subtractMultiset,
 } from "../../state/selectors.ts";
+import { unmovedButAble } from "./movement.ts";
 import {
   MAX_LEGION_HEIGHT,
   type CreatureName,
@@ -278,8 +279,14 @@ export class EndMovementCommand extends BaseCommand<Record<string, never>> {
     if (state.turn.movementRoll === null) {
       return invalid(ValidationCode.MOVEMENT_NOT_ROLLED, "roll movement first");
     }
-    // Module 4 adds: every legion that CAN move MUST move at least one when
-    // possible, and freshly split halves must separate if able.
+    // Every legion that CAN move MUST have moved before the phase ends.
+    const owing = unmovedButAble(state);
+    if (owing !== null) {
+      return invalid(
+        ValidationCode.MUST_MOVE,
+        `legion ${owing} can move and so must move before ending Movement`,
+      );
+    }
     return valid;
   }
 

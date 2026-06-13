@@ -76,6 +76,9 @@ export const ValidationCode = {
   MULLIGAN_UNAVAILABLE: "MULLIGAN_UNAVAILABLE",
   MOVEMENT_NOT_ROLLED: "MOVEMENT_NOT_ROLLED",
   SPLIT_REQUIRED: "SPLIT_REQUIRED",
+  ALREADY_MOVED: "ALREADY_MOVED",
+  ILLEGAL_MOVE: "ILLEGAL_MOVE",
+  MUST_MOVE: "MUST_MOVE",
 } as const;
 export type ValidationCode =
   (typeof ValidationCode)[keyof typeof ValidationCode];
