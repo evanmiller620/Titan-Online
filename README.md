@@ -134,6 +134,25 @@ confirmed these choices:
   authoritative state rides Postgres-Changes Realtime, ephemeral UI rides
   Broadcast, and `legion_contents` is deliberately kept off the publication.
 
+- **The client is decoupled from the rules, exactly as the engine is from the
+  UI.** `packages/client` consumes `@titan/engine` for board data and the
+  redacted view shape but never runs mutating engine paths locally. The render
+  layer (`render/`) is pure projection: `projection.ts` turns engine cube
+  coordinates into pixels (round-trip-tested), the PixiJS Masterboard and
+  Battleland renderers READ a redacted snapshot and emit clicks via callbacks,
+  never touching state. The store (`store/`) holds only the authoritative
+  snapshot and reconciles by version — stale Realtime frames are rejected so
+  the board never rolls backward (tested). Command submission is STRICT-WAIT
+  (project decision): the HUD builds a CommandDTO, the app posts it to the
+  submit-command Edge Function, and the store advances ONLY when the
+  authoritative broadcast arrives — there is no local apply to diverge.
+  Hidden information is honoured end to end: opponents' legions render as
+  wax-seal markers showing banner colour and height pips but never contents,
+  the same redaction the engine view and the RLS policy enforce. The visual
+  identity is heraldic-cartographic (vellum, oxblood, verdigris, brass),
+  grounded in Titan's own world rather than a templated default, with a
+  responsive shell, visible focus rings, and reduced-motion support.
+
 ## Workspace layout
 
 ```
@@ -156,7 +175,9 @@ supabase/           migrations (RLS boundary: legion_contents table),
 | 6 | `engine/battleland` — 11 maps, hazards, LOS, entry sides | ✅ done, 25 tests |
 | 7 | `engine/combat` — strike chart, hazards, rangestrike, carry, StrikeCommand | ✅ done, 22 tests |
 | 8 | `supabase` — schema, RLS hidden-info boundary, submit-command, redaction | ✅ done, 8 tests |
-| 9 | Client (React + PixiJS) | next |
+| 9 | `client` — React + PixiJS, strict-wait, cube projection, lobby | ✅ done, 14 tests |
+
+**All nine modules complete: 221 tests across engine (207) and client (14), every data table sourced from the Colossus project or the Law of Titan rulebook and verified by invariants rather than trusted.**
 
 ## Running
 
