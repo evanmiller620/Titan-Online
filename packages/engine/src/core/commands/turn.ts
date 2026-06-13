@@ -136,6 +136,7 @@ export class SplitLegionCommand extends BaseCommand<SplitLegionPayload> {
       moved: false,
       splitThisTurn: true,
       recruitedThisTurn: false,
+      revealed: false,
     };
 
     const player = draft.players[this.playerId]!;

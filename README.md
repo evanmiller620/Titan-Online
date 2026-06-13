@@ -117,6 +117,23 @@ confirmed these choices:
   the rulebook and exercised by the StrikeCommand end-to-end, including a
   forced-strike-number carry that slays a Lion and spills onto a Centaur.
 
+- **The hidden-information boundary is enforced in two mirrored layers.** In
+  PostgreSQL, a legion's creature list lives one-row-per-creature in
+  `legion_contents` with an RLS policy that returns rows only to the owner or
+  for revealed legions — a non-owner querying an opponent's stack gets zero
+  rows and learns nothing but the public height (in `legions.height`). In the
+  engine, `state/views.ts` performs the identical redaction (`viewFor`/
+  `publicState`), so the JSON the server stores and broadcasts already has
+  opponents' contents stripped. Two layers, one rule; the database is the hard
+  wall, the engine view is the shape contract the client renders. Both are
+  tested. All game mutations flow through the single `submit-command` Edge
+  Function (service-role writer; clients have NO table write policies), which
+  runs the byte-identical `@titan/engine` code, rolls dice with a
+  crypto-seeded server Rng, optimistic-locks on a version counter, and appends
+  an audit/replay `command_log`. Lobby lifecycle uses SECURITY DEFINER RPCs;
+  authoritative state rides Postgres-Changes Realtime, ephemeral UI rides
+  Broadcast, and `legion_contents` is deliberately kept off the publication.
+
 ## Workspace layout
 
 ```
@@ -138,8 +155,8 @@ supabase/           migrations (RLS boundary: legion_contents table),
 | 5 | `engine/creatures` — stats, recruit trees, Muster command | ✅ done, 25 tests |
 | 6 | `engine/battleland` — 11 maps, hazards, LOS, entry sides | ✅ done, 25 tests |
 | 7 | `engine/combat` — strike chart, hazards, rangestrike, carry, StrikeCommand | ✅ done, 22 tests |
-| 8 | Supabase schema + RLS + submit-command | next |
-| 9 | Client | planned |
+| 8 | `supabase` — schema, RLS hidden-info boundary, submit-command, redaction | ✅ done, 8 tests |
+| 9 | Client (React + PixiJS) | next |
 
 ## Running
 

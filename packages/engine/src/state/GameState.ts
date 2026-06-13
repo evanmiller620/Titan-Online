@@ -63,6 +63,9 @@ export interface LegionState {
    *  turn end). Also true for legions that began the turn 7 high — they may
    *  not recruit at all. */
   readonly recruitedThisTurn: boolean;
+  /** Set true once an engagement forces this legion's contents into the open.
+   *  Mirrors legions.revealed in the DB and drives view redaction. */
+  readonly revealed: boolean;
 }
 
 /** Setup-phase bookkeeping; null once the game proper begins. */
