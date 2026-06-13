@@ -81,6 +81,9 @@ export const ValidationCode = {
   MUST_MOVE: "MUST_MOVE",
   ALREADY_RECRUITED: "ALREADY_RECRUITED",
   RECRUIT_NOT_ELIGIBLE: "RECRUIT_NOT_ELIGIBLE",
+  UNKNOWN_COMBATANT: "UNKNOWN_COMBATANT",
+  ILLEGAL_STRIKE: "ILLEGAL_STRIKE",
+  ILLEGAL_MANEUVER: "ILLEGAL_MANEUVER",
 } as const;
 export type ValidationCode =
   (typeof ValidationCode)[keyof typeof ValidationCode];

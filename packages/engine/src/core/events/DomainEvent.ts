@@ -132,6 +132,29 @@ export interface CreatureRecruitedDetail extends EventBase {
   readonly creature: CreatureName;
 }
 
+export interface StrikeResolved extends EventBase {
+  readonly type: "StrikeResolved";
+  readonly strikerId: string;
+  readonly targetId: string;
+  readonly dice: number;
+  readonly strikeNumber: number;
+  readonly rolls: readonly number[];
+  readonly hits: number;
+  readonly carriedTo: string | null;
+}
+
+export interface CombatantSlain extends EventBase {
+  readonly type: "CombatantSlain";
+  readonly combatantId: string;
+  readonly creature: CreatureName;
+  readonly side: "attacker" | "defender";
+}
+
+export interface CombatantMoved extends EventBase {
+  readonly type: "CombatantMoved";
+  readonly combatantId: string;
+}
+
 export interface TurnEnded extends EventBase {
   readonly type: "TurnEnded";
   readonly endedByPlayerId: PlayerId;
@@ -151,6 +174,9 @@ export type DomainEvent =
   | LegionMoved
   | CreatureRecruited
   | CreatureRecruitedDetail
+  | StrikeResolved
+  | CombatantSlain
+  | CombatantMoved
   | TurnEnded;
 
 /** Filter an event stream down to what one player may legally see. */

@@ -8,3 +8,4 @@ export * from "./state/index.ts";
 export * from "./creatures/index.ts";
 export * from "./masterboard/index.ts";
 export * from "./battleland/index.ts";
+export * from "./combat/index.ts";

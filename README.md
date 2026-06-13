@@ -105,6 +105,18 @@ confirmed these choices:
   Titan §10: attacker on the matching 4-wide side, defender on the opposite
   3-wide side, Tower deploying inside the walls.
 
+- **Combat math is sourced from the rulebook, not reverse-engineered from
+  vibes.** The strike-number formula `clamp(4 - (attackerSkill - defenderSkill),
+  2, 6)` was derived from and verified against the Law of Titan Strike Chart
+  and its worked example (Ogre skill-2 vs Lion skill-3 = 5). Hazard striking
+  effects (Bramble defender +1 to-hit, slope/dune/wall/volcano dice & skill
+  deltas, advantage flagging), rangestrike (half-power dice, range-4 skill
+  penalty, Warlock magic-missile piercing LOS and Lord-immunity), and the
+  carry-over legality rules (§13.4–13.5: no carrying to a higher-strike-number
+  target, no carrying advantage damage unless waived) are all implemented per
+  the rulebook and exercised by the StrikeCommand end-to-end, including a
+  forced-strike-number carry that slays a Lion and spills onto a Centaur.
+
 ## Workspace layout
 
 ```
@@ -125,8 +137,8 @@ supabase/           migrations (RLS boundary: legion_contents table),
 | 4 | `engine/masterboard` — 96-land directed graph, movement, teleports | ✅ done, 24 tests |
 | 5 | `engine/creatures` — stats, recruit trees, Muster command | ✅ done, 25 tests |
 | 6 | `engine/battleland` — 11 maps, hazards, LOS, entry sides | ✅ done, 25 tests |
-| 7 | `engine/combat` — strikes, carry, rangestrike | next |
-| 8 | Supabase schema + RLS + submit-command | planned |
+| 7 | `engine/combat` — strike chart, hazards, rangestrike, carry, StrikeCommand | ✅ done, 22 tests |
+| 8 | Supabase schema + RLS + submit-command | next |
 | 9 | Client | planned |
 
 ## Running

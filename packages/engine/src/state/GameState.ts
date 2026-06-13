@@ -12,6 +12,7 @@
  */
 
 import type { FsmState } from "../core/fsm/StateMachine.ts";
+import type { CubeCoord } from "../hex/cube.ts";
 import { GAME_MACHINE } from "../core/fsm/GameFSM.ts";
 import type { LandId, LegionId, PlayerId } from "../core/events/DomainEvent.ts";
 import {
@@ -85,14 +86,37 @@ export interface TurnState {
   readonly mulliganUsed: boolean;
 }
 
-/** Battle context placeholder — populated by the combat module (7). */
+/** A single creature counter on the Battleland during a Battle. */
+export type BattleSide = "attacker" | "defender";
+
+export interface Combatant {
+  /** Stable id within this battle, e.g. "atk-3". */
+  readonly id: string;
+  readonly side: BattleSide;
+  readonly creature: CreatureName;
+  /** Battleland position; null before deployment / after removal. */
+  readonly hex: CubeCoord | null;
+  readonly damage: number;
+  readonly movedThisPhase: boolean;
+  readonly struckThisPhase: boolean;
+  readonly slain: boolean;
+}
+
+/** Live tactical state of an in-progress Battle (combat module populates it). */
 export interface BattleContext {
-  readonly attacker: LegionId;
-  readonly defender: LegionId;
   readonly land: LandId;
+  readonly terrain: string;
+  readonly attackerLegion: LegionId;
+  readonly defenderLegion: LegionId;
+  readonly attackerPlayerId: PlayerId;
+  readonly defenderPlayerId: PlayerId;
+  readonly attackerSide: string;
   readonly round: number;
-  readonly activeHalf: "defender" | "attacker";
+  readonly activeSide: BattleSide;
   readonly summonUsed: boolean;
+  readonly firstKillHappened: boolean;
+  readonly reinforcementUsed: boolean;
+  readonly combatants: readonly Combatant[];
 }
 
 export interface GameState {
