@@ -8,8 +8,9 @@
   </head>
   <body>
     <div id="root"></div>
-    <!-- Zero-config live preview of the Masterboard. The multiplayer client
-         (src/app/main.ts) is documented in docs/DEPLOYMENT.md. -->
-    <script type="module" src="/src/app/preview.ts"></script>
+    <!-- Single entry: boots the multiplayer client when the Supabase env vars
+         were set at build time, else the zero-config Masterboard preview.
+         See src/app/entry.ts and docs/DEPLOYMENT.md. -->
+    <script type="module" src="/src/app/entry.ts"></script>
   </body>
 </html>

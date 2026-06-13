@@ -115,5 +115,3 @@ export async function renderPreview(): Promise<void> {
 
   root.appendChild(legend());
 }
-
-void renderPreview();
