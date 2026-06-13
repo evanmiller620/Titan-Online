@@ -95,6 +95,7 @@ function renderLobby(client: SupabaseClient): void {
   );
 
   const name = field("Your name", "text", "e.g. Aurelia");
+  const seats = seatSelect();
   const code = field("Room code", "text", "paste a code to join");
   const status = node("p", [
     `font-size:${typ.scale.sm}`,
@@ -109,7 +110,7 @@ function renderLobby(client: SupabaseClient): void {
   const row = node("div", ["display:flex", "gap:10px", "margin-top:20px"]);
   row.append(createBtn, joinBtn);
 
-  card.append(name.wrap, code.wrap, row, status);
+  card.append(name.wrap, seats.wrap, code.wrap, row, status);
   root.appendChild(card);
 
   const busy = (on: boolean, msg = "") => {
@@ -131,8 +132,9 @@ function renderLobby(client: SupabaseClient): void {
     busy(true, "Creating the table…");
     try {
       await ensureAuth(client);
-      const gameId = await createTable(client, { id: "p1", name: username });
+      // The engine fixes the roster now, so the founder picks the seat count;
       // create_game seats the founder as slot p1 (migration 0006).
+      const gameId = await createTable(client, { name: username }, seats.value());
       void startGame(client, gameId, "p1", username);
     } catch (e) {
       fail(message(e));
@@ -247,9 +249,9 @@ async function startGame(
     rosterLine.textContent =
       roster.length > 0 ? `At the table: ${roster.join(", ")}` : "You're the only one here so far.";
 
-    const phase = phaseLabel(store);
-    const inSetup = store.snapshot !== null && phase === "Setup";
-    rollBtn.style.display = inSetup ? "" : "none";
+    // The roll is only legal in this exact sub-phase (see RollTurnOrderCommand).
+    const canRoll = store.snapshot?.fsm.path === "Setup.RollingForOrder";
+    rollBtn.style.display = canRoll ? "" : "none";
     rollBtn.disabled = store.command.kind === "submitting";
 
     if (store.command.kind === "submitting") {
@@ -328,6 +330,33 @@ function field(label: string, type: string, placeholder: string): {
   ].join(";");
   wrap.appendChild(input);
   return { wrap, input };
+}
+
+/** A 2–6 seat picker for the Create flow. The engine needs the roster size up
+ *  front (a table is fixed at creation), so the founder chooses it here. */
+function seatSelect(): { wrap: HTMLElement; value: () => number } {
+  const wrap = node("label", ["display:block", "margin-bottom:14px"]);
+  wrap.innerHTML = `<span style="display:block;font-size:${typ.scale.xs};letter-spacing:.12em;text-transform:uppercase;color:${palette.inkSoft};margin-bottom:6px">Seats (for a new table)</span>`;
+  const select = document.createElement("select");
+  select.style.cssText = [
+    "width:100%",
+    "box-sizing:border-box",
+    "padding:10px 12px",
+    `font-family:${typ.body}`,
+    `font-size:${typ.scale.sm}`,
+    `color:${palette.ink}`,
+    "background:#FBF7EC",
+    `border:1px solid ${palette.parchmentEdge}`,
+    "border-radius:2px",
+  ].join(";");
+  for (let n = 2; n <= 6; n++) {
+    const opt = document.createElement("option");
+    opt.value = String(n);
+    opt.textContent = `${n} players`;
+    select.appendChild(opt);
+  }
+  wrap.appendChild(select);
+  return { wrap, value: () => Number(select.value) };
 }
 
 function button(text: string, color: string): HTMLButtonElement {

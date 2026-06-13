@@ -24,17 +24,22 @@ export interface LobbyMember {
  * engine so the DB stores exactly what the engine would produce, then calls
  * the create_game RPC. Returns the new game id.
  *
- * NOTE: createGame needs the eventual player roster for caretaker Titan counts,
- * but a lobby starts with one seat and fills over time. We create the engine
- * state with a single founder and the server reconciles the player set as
- * others join (the engine's RollTurnOrder command finalises the roster). For a
- * fixed-size table, pass the full expected roster here instead.
+ * The engine fixes the roster at creation (it needs 2–6 players for the
+ * caretaker Titan count and the order roll), so the founder chooses how many
+ * seats the table has. The founder takes slot p1 with their name; the rest are
+ * placeholder seats p2..pN that real users claim via join_game in seat order.
+ * Their display names ride Presence, not the engine roster.
  */
 export async function createTable(
   client: SupabaseClient,
-  founder: { id: string; name: string },
+  founder: { name: string },
+  seats: number,
 ): Promise<string> {
-  const state = createGame({ gameId: crypto.randomUUID(), players: [{ id: "p1", name: founder.name }] });
+  if (seats < 2 || seats > 6) throw new Error("a table has 2 to 6 seats");
+  const players = Array.from({ length: seats }, (_, i) =>
+    i === 0 ? { id: "p1", name: founder.name } : { id: `p${i + 1}`, name: `Player ${i + 1}` },
+  );
+  const state = createGame({ gameId: crypto.randomUUID(), players });
   const initial = publicState(state);
   const { data, error } = await client.rpc("create_game", { initial_public_state: initial });
   if (error) throw new Error(`could not create table: ${describe(error)}`);
