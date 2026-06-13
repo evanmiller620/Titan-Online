@@ -55,8 +55,9 @@ export function boot(): void {
   createRoot(root).render(renderApp(client));
 }
 
-/** Placeholder app node; App.tsx provides the real JSX tree in a full build. */
-function renderApp(client: ReturnType<typeof makeClient>): unknown {
+/** App node. Returns `any` so this compiles under both real react-dom and the
+ *  offline shim; the full JSX App tree is provided by App.tsx in a real build. */
+function renderApp(client: ReturnType<typeof makeClient>): any {
   return { app: "TitanApp", client };
 }
 

@@ -6,8 +6,11 @@
   "description": "Titan web client. React UI + PixiJS board rendering, strictly decoupled from the @titan/engine rules. Subscribes to Supabase Realtime for authoritative state; submits commands and waits (strict-wait v1) for the reconciled broadcast.",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
-    "typecheck": "tsc --noEmit",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -p tsconfig.json",
+    "typecheck:offline": "tsc -p tsconfig.offline.json",
+    "typecheck:logic": "tsc -p tsconfig.logic.json",
     "test": "node --experimental-strip-types --test test/*.test.ts"
   },
   "dependencies": {

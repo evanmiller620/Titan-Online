@@ -1,0 +1,8 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "pnpm --filter @titan/client build",
+  "installCommand": "pnpm install",
+  "outputDirectory": "packages/client/dist",
+  "framework": null,
+  "github": { "silent": true }
+}

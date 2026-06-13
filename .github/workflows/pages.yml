@@ -1,0 +1,61 @@
+name: Deploy to GitHub Pages
+
+# Builds the client (the live preview is the default landing) and publishes it
+# to GitHub Pages. For a PROJECT site served under /<repo>/, VITE_BASE is set
+# to the repo path so asset URLs resolve. If you deploy to Vercel instead, you
+# do not need this workflow.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow one concurrent deployment; newer pushes cancel in-progress builds.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install
+      - name: Build client
+        working-directory: packages/client
+        env:
+          # Project-site base path, e.g. "/titan/". Repo name comes from the
+          # event context so this is correct without hard-coding.
+          VITE_BASE: /${{ github.event.repository.name }}/
+          # Optional: set these as repository VARIABLES (Settings → Secrets and
+          # variables → Actions → Variables) to build the multiplayer client.
+          # The anon key is public by design; never use the service_role key.
+          VITE_SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
+        run: pnpm build
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: packages/client/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

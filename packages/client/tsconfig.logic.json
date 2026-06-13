@@ -4,11 +4,16 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "jsx": "react-jsx",
-    "types": ["vite/client"],
+    "types": [],
     "allowImportingTsExtensions": true,
     "noEmit": true,
     "paths": { "@titan/engine": ["../engine/src/index.ts"] }
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "test/**/*.ts"]
+  "include": [
+    "src/render/projection.ts",
+    "src/store/gameStore.ts",
+    "src/ui/tokens.ts",
+    "test/pure.test.ts",
+    "test/node-builtins.d.ts"
+  ]
 }

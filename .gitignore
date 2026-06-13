@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+packages/*/dist/
+*.tsbuildinfo
+
+# Generated at deploy time — vendored engine for the Deno edge runtime
+supabase/functions/_shared/engine/
+
+# Environment & secrets (never commit; the anon key goes in host env vars)
+.env
+.env.local
+.env.*.local
+
+# Supabase local state
+supabase/.branches/
+supabase/.temp/
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/

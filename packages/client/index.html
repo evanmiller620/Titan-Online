@@ -3,10 +3,13 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Titan — a digital edition of the 1980 fantasy wargame. Live board preview." />
     <title>Titan</title>
   </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/src/app/main.ts"></script>
+    <!-- Zero-config live preview of the Masterboard. The multiplayer client
+         (src/app/main.ts) is documented in docs/DEPLOYMENT.md. -->
+    <script type="module" src="/src/app/preview.ts"></script>
   </body>
 </html>

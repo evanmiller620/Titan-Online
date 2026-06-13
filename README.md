@@ -192,3 +192,30 @@ npm test            # node --experimental-strip-types --test
 
 On a network-connected machine, `pnpm install` at the root and layer vitest /
 @types/node in if preferred — sources don't change.
+
+## Deploy
+
+The app deploys as two independent pieces: the **Supabase backend** (schema,
+RLS, and the authoritative `submit-command` function) and the **web client**
+(Vercel or GitHub Pages). The client also ships a **zero-config live preview**
+of the Masterboard that runs the engine in the browser with no backend — open
+the deployed URL and you see the board immediately.
+
+Quickstart:
+
+```bash
+pnpm install
+
+# Backend
+supabase link --project-ref <ref> && supabase db push
+bash scripts/vendor-engine-for-deno.sh
+supabase functions deploy submit-command --import-map supabase/functions/import_map.json
+
+# Client (Vercel: import the repo; vercel.json is preconfigured)
+#   set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in the host's env
+pnpm --filter @titan/client build   # → packages/client/dist
+```
+
+CI/CD is wired via `.github/workflows/` (CI on every push/PR, Pages deploy, and
+Supabase deploy). The **full setup, hosting options, online testing, local dev,
+and security model are documented in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).**

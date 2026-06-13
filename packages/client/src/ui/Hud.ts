@@ -178,6 +178,9 @@ function humanize(commandType: string): string {
 
 // Tiny createElement shim so this file reads as JSX-free TS that still
 // type-checks against the React shim without pulling in the JSX runtime.
-function el(tag: string, props: Record<string, unknown>, children?: unknown): unknown {
+// Returns `any` deliberately: this keeps the component assignable to React.FC
+// under BOTH the real @types/react (ReactNode) and the offline shim, since we
+// build the actual element tree with createElement at runtime via the bundler.
+function el(tag: string, props: Record<string, unknown>, children?: unknown): any {
   return { tag, props, children };
 }

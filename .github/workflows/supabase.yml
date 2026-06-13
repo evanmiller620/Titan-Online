@@ -1,0 +1,40 @@
+name: Deploy Supabase backend
+
+# Applies database migrations and deploys the submit-command edge function.
+# Runs on changes under supabase/** (or manually). Requires two repository
+# SECRETS (Settings → Secrets and variables → Actions → Secrets):
+#   SUPABASE_ACCESS_TOKEN  a personal access token (Supabase dashboard → Account)
+#   SUPABASE_PROJECT_REF   your project ref (the subdomain of your project URL)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "supabase/**"
+      - "packages/engine/**"   # the edge function vendors the engine
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Link project
+        run: supabase link --project-ref "${{ secrets.SUPABASE_PROJECT_REF }}"
+
+      - name: Apply migrations
+        run: supabase db push
+
+      # The edge runtime is Deno and cannot resolve the pnpm workspace package,
+      # so vendor the engine source (Deno-compatible .ts imports) before deploy.
+      - name: Vendor engine for Deno
+        run: bash scripts/vendor-engine-for-deno.sh
+
+      - name: Deploy submit-command function
+        run: supabase functions deploy submit-command --import-map supabase/functions/import_map.json
