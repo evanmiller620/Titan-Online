@@ -14,8 +14,10 @@
     "src/store/gameStore.ts",
     "src/app/battleUi.ts",
     "src/ui/tokens.ts",
+    "src/ui/debugModel.ts",
     "test/pure.test.ts",
     "test/battle-ui.test.ts",
+    "test/debug-model.test.ts",
     "test/node-builtins.d.ts"
   ]
 }

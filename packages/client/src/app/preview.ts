@@ -25,6 +25,7 @@ import {
   type GameStateView,
 } from "@titan/engine";
 import { MasterboardRenderer } from "../render/MasterboardRenderer.ts";
+import { createDebugPanel } from "../ui/DebugPanel.ts";
 import { palette, tokensCss, type as typ, space } from "../ui/tokens.ts";
 
 const TOWERS = [100, 200, 300, 400, 500, 600] as const;
@@ -86,13 +87,18 @@ export async function renderPreview(): Promise<void> {
   const root = document.getElementById("root");
   if (!root) throw new Error("missing #root mount");
   root.innerHTML = "";
+  root.style.cssText = "position:absolute;inset:0;display:flex;";
+
+  // Debug inspector on the left; live board fills the rest.
+  const view = previewView();
+  const debug = createDebugPanel({ startCollapsed: true });
+  debug.update(view);
+  root.appendChild(debug.el);
 
   const board = document.createElement("div");
   board.className = "titan-board";
-  board.style.cssText = "position:absolute;inset:0;";
+  board.style.cssText = "position:relative;flex:1;min-width:0;";
   root.appendChild(board);
-
-  const view = previewView();
 
   const app = new Application();
   await app.init({ background: palette.vellum, antialias: true, resizeTo: board });
@@ -113,5 +119,5 @@ export async function renderPreview(): Promise<void> {
   });
   renderer.render(view, null, null);
 
-  root.appendChild(legend());
+  board.appendChild(legend());
 }

@@ -29,6 +29,7 @@ import {
 } from "../store/gameStore.ts";
 import { MasterboardRenderer } from "../render/MasterboardRenderer.ts";
 import { actionsFor, isViewersMove, terrainOf, moveDestinations, engagementLands, type Selection } from "./actions.ts";
+import { createDebugPanel } from "../ui/DebugPanel.ts";
 import { palette, tokensCss, type as typ, space } from "../ui/tokens.ts";
 
 // ---------------------------------------------------------------------------
@@ -183,7 +184,8 @@ async function startGame(
   root.innerHTML = "";
   root.style.cssText = "position:absolute;inset:0;display:flex;";
 
-  // Board on the left, a thin parchment side panel on the right.
+  // Debug inspector docks on the LEFT; board centre; command panel right.
+  const debug = createDebugPanel();
   const boardEl = node("div", ["position:relative", "flex:1", "min-width:0"]);
   const panel = node("aside", [
     "width:300px",
@@ -195,7 +197,7 @@ async function startGame(
     `color:${palette.ink}`,
     "overflow:auto",
   ]);
-  root.append(boardEl, panel);
+  root.append(debug.el, boardEl, panel);
 
   // Persistent panel fields, updated on each dispatch (so the roll button keeps
   // its listener across re-renders).
@@ -248,6 +250,7 @@ async function startGame(
     store = reduce(store, event);
     paintPanel();
     paintBoard();
+    debug.update(store.snapshot, store.command);
   };
 
   /** A board tap: if the land holds one of my legions, select it; otherwise
@@ -429,6 +432,7 @@ async function startGame(
   if (snap) dispatch({ type: "snapshot", version: snap.version, view: snap.view });
 
   paintPanel();
+  debug.update(store.snapshot, store.command);
   window.addEventListener("beforeunload", () => subs.unsubscribe());
 }
 
