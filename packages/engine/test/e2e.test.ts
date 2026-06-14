@@ -195,10 +195,10 @@ describe("e2e: engagements resolved within a turn", () => {
     const scoreBefore = s.players.p1!.score;
     // Resolve both.
     s = ok(s, new E.SelectEngagementCommand("p1", { land: 30 }));
-    s = ok(s, new E.ResolveEngagementCommand("p1", { outcome: "flee" }));
+    s = ok(s, new E.ResolveEngagementCommand("p1", { outcome: "settle", attackerShare: 1 }));
     assert.equal(s.fsm.path, "Turn.Engagement.Choosing", "more engagements remain");
     s = ok(s, new E.SelectEngagementCommand("p1", { land: 40 }));
-    s = ok(s, new E.ResolveEngagementCommand("p1", { outcome: "concede" }));
+    s = ok(s, new E.ResolveEngagementCommand("p1", { outcome: "settle", attackerShare: 1 }));
 
     assert.equal(s.fsm.path, "Turn.Mustering", "all engagements resolved → Mustering");
     assert.ok(s.players.p1!.score > scoreBefore, "attacker scored from both wins");
@@ -232,7 +232,7 @@ describe("e2e: losing the Titan ends the game", () => {
     assert.deepEqual(E.pendingEngagements(s), [targetLand]);
     s = ok(s, new E.EndMovementCommand("p1", {}));
     s = ok(s, new E.SelectEngagementCommand("p1", { land: targetLand }));
-    s = ok(s, new E.ResolveEngagementCommand("p1", { outcome: "flee" }));
+    s = ok(s, new E.ResolveEngagementCommand("p1", { outcome: "settle", attackerShare: 1 }));
 
     assert.equal(s.fsm.path, "GameOver");
     assert.ok(s.players[p2id]!.eliminated);

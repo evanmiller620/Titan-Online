@@ -99,8 +99,8 @@ export interface TurnOptions {
   roll?: number;
   /** If true, perform the turn-1 initial split first. */
   split?: boolean;
-  /** Resolve any engagements that arise via this outcome (default "flee"). */
-  resolveWith?: "flee" | "concede";
+  /** Attacker's point share when settling engagements (default 1 = takes all). */
+  settleShare?: number;
   /** Muster with every eligible legion (first option) before ending. */
   muster?: boolean;
 }
@@ -137,7 +137,7 @@ export function playTurn(s: State, opts: TurnOptions = {}): State {
   while (s.fsm.path === "Turn.Engagement.Choosing") {
     const land = E.pendingEngagements(s)[0]!;
     s = ok(s, new E.SelectEngagementCommand(pid, { land }));
-    s = ok(s, new E.ResolveEngagementCommand(pid, { outcome: opts.resolveWith ?? "flee" }));
+    s = ok(s, new E.ResolveEngagementCommand(pid, { outcome: "settle", attackerShare: opts.settleShare ?? 1 }));
   }
 
   // The game may have ended mid-engagement.

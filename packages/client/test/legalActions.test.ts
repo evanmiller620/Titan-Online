@@ -12,7 +12,7 @@ import {
   legalActions, planMasterboardClick, planBattleClick,
   autoDeployPlacements, deployZoneLabels, proposeInitialSplit, battleBanner,
   NO_SELECTION, type Selection,
-} from "../src/game/legalActions.ts";
+} from "@titan/engine";
 
 const sel = (p: Partial<Selection> = {}): Selection => ({ ...NO_SELECTION, ...p });
 const types = (view: any, seat: string, s: Selection = NO_SELECTION) => legalActions(view, seat, s).map((a) => a.dto.type);
@@ -46,7 +46,7 @@ describe("legalActions — setup & turn phases", () => {
     assert.ok(new SplitLegionCommand("p1", split as any).validate(s).ok, "engine accepts the proposed split");
   });
 
-  it("offers fight/flee/concede only to the active player", () => {
+  it("selecting a legion then a legal destination issues MoveLegion", () => {
     let s = afterSetup();
     s = new SplitLegionCommand("p1", proposeInitialSplit(viewFor(s, "p1"), "p1") as any).execute(s, scriptedRng([])).state;
     s = new EndSplitsCommand("p1", {}).execute(s, scriptedRng([])).state;
@@ -56,6 +56,19 @@ describe("legalActions — setup & turn phases", () => {
     const dest = destinationsForRoll(leg.land, 3)[0]!.destination;
     const plan = planMasterboardClick(v, "p1", sel({ legion: leg.marker }), dest);
     assert.equal(plan.dto?.type, "MoveLegion");
+  });
+
+  it("negotiation offers fight and point-split settlements (no concession)", () => {
+    const v: any = {
+      gameId: "g", fsm: { path: "Turn.Engagement.Negotiation", returnStack: [] }, playerOrder: ["p1", "p2"],
+      players: {}, setup: null, turn: { number: 2, activeIndex: 0, movementRoll: null, mulliganUsed: false },
+      caretaker: {}, legions: {}, battle: null, revealedMarkers: [],
+    };
+    const acts = legalActions(v, "p1", NO_SELECTION);
+    assert.deepEqual(acts.map((a) => a.dto.payload), [
+      { outcome: "fight" }, { outcome: "settle", attackerShare: 0.5 }, { outcome: "settle", attackerShare: 1 },
+    ]);
+    assert.ok(!acts.some((a) => JSON.stringify(a.dto.payload).includes("concede")));
   });
 });
 
@@ -117,11 +130,33 @@ describe("legalActions — battle phases", () => {
 
   it("planBattleClick: select, move, strike", () => {
     const man = battleView("Maneuver", { activeSide: "defender", units: [{ id: "def-0", side: "defender", creature: "Centaur", label: "C4" }, { id: "atk-0", side: "attacker", creature: "Ogre", label: "A1" }] });
-    assert.deepEqual(planBattleClick(man, "p2", null, cubeOf("C4")).select, { combatant: "def-0" });
-    assert.equal(planBattleClick(man, "p2", "def-0", cubeOf("C3")).dto?.type, "MoveCombatant");
+    assert.deepEqual(planBattleClick(man, "p2", NO_SELECTION, cubeOf("C4")).select, { combatant: "def-0" });
+    assert.equal(planBattleClick(man, "p2", sel({ combatant: "def-0" }), cubeOf("C3")).dto?.type, "MoveCombatant");
 
     const str = battleView("Strike", { activeSide: "attacker", units: [{ id: "atk-0", side: "attacker", creature: "Ogre", label: "C3" }, { id: "def-0", side: "defender", creature: "Centaur", label: "C4" }] });
-    assert.equal(planBattleClick(str, "p1", "atk-0", cubeOf("C4")).dto?.type, "Strike");
-    assert.deepEqual(planBattleClick(str, "p2", "atk-0", cubeOf("C4")), {}); // not p2's phase
+    assert.equal(planBattleClick(str, "p1", sel({ combatant: "atk-0" }), cubeOf("C4")).dto?.type, "Strike");
+    assert.deepEqual(planBattleClick(str, "p2", sel({ combatant: "atk-0" }), cubeOf("C4")), {}); // not p2's phase
+  });
+
+  it("manual deployment: clicks place each character; once all placed, Deploy submits them", () => {
+    const dep = battleView("DefenderDeployment", { units: [
+      { id: "atk-0", side: "attacker", creature: "Ogre" },
+      { id: "def-0", side: "defender", creature: "Centaur" },
+      { id: "def-1", side: "defender", creature: "Titan" },
+    ] });
+    // First click places def-0 on a legal zone hex (C5 is a defender entry hex).
+    const p1 = planBattleClick(dep, "p2", NO_SELECTION, cubeOf("C5"));
+    assert.deepEqual(p1.select?.deploy, [{ combatantId: "def-0", hex: "C5" }]);
+    // Second click (with that placement carried in selection) places def-1.
+    const after1 = sel({ deploy: p1.select!.deploy });
+    const p2 = planBattleClick(dep, "p2", after1, cubeOf("D6"));
+    assert.equal(p2.select?.deploy?.length, 2);
+    // Re-clicking an occupied placement is a no-op.
+    assert.deepEqual(planBattleClick(dep, "p2", sel({ deploy: p2.select!.deploy }), cubeOf("C5")), {});
+    // With all placed, the action bar offers a Deploy carrying those placements.
+    const acts = legalActions(dep, "p2", sel({ deploy: p2.select!.deploy }));
+    const deploy = acts.find((a) => a.dto.type === "DeployLegion")!;
+    assert.deepEqual((deploy.dto.payload as any).placements, p2.select!.deploy);
+    assert.ok(new DeployLegionCommand("p2", deploy.dto.payload as any).validate(dep as any).ok);
   });
 });

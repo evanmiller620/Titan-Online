@@ -78,11 +78,11 @@ function playTurn(s: GameState): GameState {
   s = moveAll(s, me, 3);
   s = exec(s, new EndMovementCommand(me, {}));
 
-  // Engagement — resolve any clash administratively (defender flees).
+  // Engagement — resolve any clash by a negotiated settlement (no concessions).
   while (s.fsm.path.endsWith("Engagement.Choosing") && pendingEngagements(s).length > 0) {
     const land = pendingEngagements(s)[0]!;
     s = exec(s, new SelectEngagementCommand(me, { land }));
-    s = exec(s, new ResolveEngagementCommand(me, { outcome: "flee" }));
+    s = exec(s, new ResolveEngagementCommand(me, { outcome: "settle", attackerShare: 1 }));
   }
 
   // Mustering — close the turn.

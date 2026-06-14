@@ -107,3 +107,11 @@ export const INITIAL_LEGION: readonly CreatureName[] = Object.freeze([
 
 /** Hard cap on legion height at all times except the turn-1 pre-split. */
 export const MAX_LEGION_HEIGHT = 7;
+
+/**
+ * Avalon Hill legion definition: a standard legion is 2 to 7 characters plus a
+ * marker. The ONLY legal single-character legion is a Titan's legion reduced to
+ * the Titan alone by combat casualties — so splitting may never create a legion
+ * smaller than this, and a legion may never be voluntarily reduced below it.
+ */
+export const MIN_LEGION_HEIGHT = 2;

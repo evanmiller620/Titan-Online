@@ -1,13 +1,13 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { GameEngine, deriveSeed } from "../src/game/engine.ts";
+import { GameRunner, deriveSeed } from "@titan/engine";
 import type { CommandDTO } from "@titan/engine";
 
 const json = (o: unknown) => JSON.parse(JSON.stringify(o));
 
 /** Drive setup on an engine, following its own (dice-determined) pick order. */
-function driveSetup(e: GameEngine): void {
+function driveSetup(e: GameRunner): void {
   e.apply({ type: "RollTurnOrder", playerId: "p1", payload: {} });
   const towers = [100, 400];
   for (let i = 0; i < 2; i++) {
@@ -21,9 +21,9 @@ function driveSetup(e: GameEngine): void {
   }
 }
 
-describe("GameEngine — client authority", () => {
+describe("GameRunner — client authority", () => {
   it("validates locally and rejects illegal commands", () => {
-    const e = GameEngine.fresh(2, 1);
+    const e = GameRunner.fresh(2, 1);
     const bad = e.apply({ type: "EndSplits", playerId: "p1", payload: {} });
     assert.ok(!bad.ok && bad.code === "WRONG_PHASE");
     const ok = e.apply({ type: "RollTurnOrder", playerId: "p1", payload: {} });
@@ -31,16 +31,16 @@ describe("GameEngine — client authority", () => {
   });
 
   it("is DETERMINISTIC: replaying the same seed + log reproduces exact state", () => {
-    const e1 = GameEngine.fresh(2, 0xc0ffee);
+    const e1 = GameRunner.fresh(2, 0xc0ffee);
     driveSetup(e1);
-    const e2 = GameEngine.restore(e1.snapshot()); // same seed + log
+    const e2 = GameRunner.restore(e1.snapshot()); // same seed + log
     assert.deepEqual(json(e2.state), json(e1.state));
   });
 
   it("two engines with the same seed + commands stay byte-identical (peer sync)", () => {
     const log: CommandDTO[] = [{ type: "RollTurnOrder", playerId: "p1", payload: {} }];
-    const a = GameEngine.fresh(3, 42);
-    const b = GameEngine.fresh(3, 42);
+    const a = GameRunner.fresh(3, 42);
+    const b = GameRunner.fresh(3, 42);
     for (const dto of log) { a.apply(dto); b.apply(dto); }
     assert.deepEqual(json(a.state), json(b.state));
     // The roll-off used dice; identical seed ⇒ identical order.
@@ -48,7 +48,7 @@ describe("GameEngine — client authority", () => {
   });
 
   it("undo replays the log without the last command", () => {
-    const e = GameEngine.fresh(2, 7);
+    const e = GameRunner.fresh(2, 7);
     e.apply({ type: "RollTurnOrder", playerId: "p1", payload: {} });
     const afterRoll = json(e.state);
     const order = e.state.setup!.order;
@@ -60,23 +60,23 @@ describe("GameEngine — client authority", () => {
   });
 
   it("forceRolls overrides the dice for the next command (testing aid)", () => {
-    const e = GameEngine.fresh(2, 999);
+    const e = GameRunner.fresh(2, 999);
     e.forceRolls([6, 2]); // p1 rolls 6, p2 rolls 2 → p1 first regardless of seed
     e.apply({ type: "RollTurnOrder", playerId: "p1", payload: {} });
     assert.deepEqual(e.state.setup!.order, ["p1", "p2"]);
   });
 
   it("reveal-all view exposes every legion's contents", () => {
-    const e = GameEngine.fresh(2, 5);
+    const e = GameRunner.fresh(2, 5);
     driveSetup(e);
     const all = e.view(null, true);
     assert.ok(Object.values(all.legions).every((l) => Array.isArray(l.creatures)));
   });
 
   it("serialize → deserialize round-trips to identical state (save/load)", () => {
-    const e = GameEngine.fresh(2, 0xabc);
+    const e = GameRunner.fresh(2, 0xabc);
     driveSetup(e);
-    const restored = GameEngine.deserialize(e.serialize());
+    const restored = GameRunner.deserialize(e.serialize());
     assert.deepEqual(json(restored.state), json(e.state));
     assert.equal(restored.sequence, e.sequence);
     // and it keeps playing from there identically

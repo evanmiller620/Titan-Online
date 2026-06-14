@@ -465,6 +465,8 @@ export interface SummonAngelPayload {
   readonly fromLegion: LegionId;
   /** "Angel" (default) or "Archangel". */
   readonly creature?: CreatureName;
+  /** Optional board hex (label) to place the summoned flyer on; auto if omitted. */
+  readonly hex?: string;
 }
 
 export class SummonAngelCommand extends BaseCommand<SummonAngelPayload> {
@@ -495,6 +497,13 @@ export class SummonAngelCommand extends BaseCommand<SummonAngelPayload> {
     if (!src.creatures.includes(want)) {
       return invalid(ValidationCode.ILLEGAL_SUMMON, `that legion has no ${want}`);
     }
+    if (this.payload.hex !== undefined) {
+      const map = battleMapFor(battle.terrain);
+      const hex = map && labelIndex(map).get(this.payload.hex);
+      if (!hex) return invalid(ValidationCode.ILLEGAL_SUMMON, `no such hex ${this.payload.hex}`);
+      if (isImpassableTerrain(hex.terrain)) return invalid(ValidationCode.ILLEGAL_SUMMON, "cannot summon onto impassable terrain");
+      if (occupiedKeys(battle).has(cubeKey(hex.cube))) return invalid(ValidationCode.ILLEGAL_SUMMON, "that hex is occupied");
+    }
     return valid;
   }
 
@@ -521,7 +530,8 @@ export class SummonAngelCommand extends BaseCommand<SummonAngelPayload> {
     const map = battleMapFor(battle.terrain)!;
     const grid = indexMap(map);
     const occ = occupiedKeys(battle);
-    const spot = firstEmptyAdjacentToSide(grid, battle, "attacker", occ) ?? firstEmptyHex(grid, occ)!;
+    const picked = this.payload.hex ? labelIndex(map).get(this.payload.hex)?.cube : undefined;
+    const spot = picked ?? firstEmptyAdjacentToSide(grid, battle, "attacker", occ) ?? firstEmptyHex(grid, occ)!;
 
     const newId = `atk-s${battle.combatants.length}`;
     const summoned: Combatant = {

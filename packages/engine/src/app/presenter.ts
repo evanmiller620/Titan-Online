@@ -1,41 +1,24 @@
 /**
- * Legal actions (Titan client, game) — the SINGLE source of UI legality.
+ * Presenter (Titan engine, module: app) — the SINGLE source of UI legality.
  *
- * Pure functions of (view, seat, selection). They answer two questions:
+ * Pure functions of (view, seat, selection) that answer the questions a
+ * frontend asks:
  *   legalActions()        which command buttons are legal for this seat now?
  *   planMasterboardClick()/planBattleClick()  what does a board click mean?
  *
- * Every result is a ready-to-submit CommandDTO; the engine re-validates each
- * one authoritatively, so an optimistic button can never corrupt state — it is
- * simply rejected. This replaces the old actions.ts + battleUi.ts duplication.
+ * Every result is a ready-to-submit CommandDTO; the runner re-validates each one
+ * authoritatively, so an optimistic button can never corrupt state — it is just
+ * rejected. This lives in the engine (not the client) so the frontend never
+ * re-implements the rules: it consumes these through the app facade.
  */
 
-import {
-  BATTLE_MAPS,
-  attackerEntryHexes,
-  defenderEntryHexes,
-  indexMap,
-  movementRulesFor,
-  isImpassableTerrain,
-  reachable,
-  cubeKey,
-  cubeNeighbor,
-  cubeDistance,
-  CREATURE_STATS,
-  eligibleRecruits,
-  destinationsForRoll,
-  towerTeleportTargets,
-  titanTeleportTargets,
-  isTower,
-  getLand,
-  MASTER_LANDS,
-  PLAYER_COLORS,
-  LORDS,
-  type CommandDTO,
-  type GameStateView,
-  type CubeCoord,
-  type MasterTerrain,
-} from "@titan/engine";
+import { BATTLE_MAPS, attackerEntryHexes, defenderEntryHexes, indexMap, movementRulesFor, isImpassableTerrain } from "../battleland/index.ts";
+import { reachable, cubeKey, cubeNeighbor, cubeDistance, type CubeCoord } from "../hex/index.ts";
+import { CREATURE_STATS, eligibleRecruits, LORDS } from "../creatures/index.ts";
+import { destinationsForRoll, towerTeleportTargets, titanTeleportTargets, isTower, getLand, MASTER_LANDS, type MasterTerrain } from "../masterboard/index.ts";
+import { PLAYER_COLORS } from "../state/GameState.ts";
+import type { GameStateView } from "../state/views.ts";
+import type { CommandDTO } from "../core/commands/Command.ts";
 
 export interface Action {
   readonly label: string;
@@ -44,13 +27,17 @@ export interface Action {
   readonly hint?: string;
 }
 
+export interface DeployPlacement { readonly combatantId: string; readonly hex: string }
+
 export interface Selection {
   readonly legion: string | null; // masterboard legion marker
   readonly land: number | null; // masterboard land
   readonly combatant: string | null; // battle combatant id
+  readonly deploy: readonly DeployPlacement[]; // accumulated manual deployment
+  readonly hex: string | null; // a chosen battle hex (e.g. Angel summon target)
 }
 
-export const NO_SELECTION: Selection = { legion: null, land: null, combatant: null };
+export const NO_SELECTION: Selection = { legion: null, land: null, combatant: null, deploy: [], hex: null };
 
 export interface ClickPlan {
   readonly select?: Partial<Selection>;
@@ -112,7 +99,7 @@ export function legalActions(view: GameStateView, seat: string, sel: Selection):
   const dto = (type: string, payload: Record<string, unknown> = {}): CommandDTO => ({ type, playerId: seat, payload });
 
   if (path.startsWith("Setup")) return setupActions(view, seat, dto);
-  if (path.includes("Battle.")) return battleActions(view, seat, dto);
+  if (path.includes("Battle.")) return battleActions(view, seat, sel, dto);
   if (!seatActsNow(view, seat)) return [];
 
   if (path.endsWith("Commencement")) {
@@ -136,8 +123,8 @@ export function legalActions(view: GameStateView, seat: string, sel: Selection):
   if (path.endsWith("Engagement.Negotiation")) {
     return [
       { label: "Fight", dto: dto("ResolveEngagement", { outcome: "fight" }), primary: true },
-      { label: "Make them flee", dto: dto("ResolveEngagement", { outcome: "flee" }) },
-      { label: "Concede", dto: dto("ResolveEngagement", { outcome: "concede" }) },
+      { label: "Settle — split points", dto: dto("ResolveEngagement", { outcome: "settle", attackerShare: 0.5 }) },
+      { label: "Settle — take all", dto: dto("ResolveEngagement", { outcome: "settle", attackerShare: 1 }) },
     ];
   }
   if (path.endsWith("Mustering")) {
@@ -166,14 +153,22 @@ function setupActions(view: GameStateView, seat: string, dto: (t: string, p?: Re
   return [];
 }
 
-function battleActions(view: GameStateView, seat: string, dto: (t: string, p?: Record<string, unknown>) => CommandDTO): Action[] {
+function battleActions(view: GameStateView, seat: string, sel: Selection, dto: (t: string, p?: Record<string, unknown>) => CommandDTO): Action[] {
   const b = view.battle!;
   const side = actorSide(view);
   if (!side || battleActor(view) !== seat) return [];
   const path = view.fsm.path;
 
   if (path.endsWith("Deployment")) {
-    return [{ label: "Deploy legion", dto: dto("DeployLegion", { placements: autoDeployPlacements(view, side) }), primary: true }];
+    const mine = b.combatants.filter((c) => c.side === side);
+    const placed = sel.deploy.length;
+    if (placed >= mine.length) {
+      return [{ label: `Deploy legion (${placed}/${mine.length})`, dto: dto("DeployLegion", { placements: sel.deploy }), primary: true }];
+    }
+    return [{
+      label: `Auto-place all (${placed}/${mine.length} placed — or click hexes)`,
+      dto: dto("DeployLegion", { placements: autoDeployPlacements(view, side) }), primary: true,
+    }];
   }
   if (path.endsWith("Round.Maneuver")) {
     const out: Action[] = [];
@@ -185,7 +180,12 @@ function battleActions(view: GameStateView, seat: string, dto: (t: string, p?: R
   }
   if (path.endsWith("Round.Strike") || path.endsWith("Round.Strikeback")) {
     if (b.summonPending && seat === b.attackerPlayerId) {
-      const out: Action[] = summonSources(view).map((m) => ({ label: `Summon Angel from ${m}`, dto: dto("SummonAngel", { fromLegion: m, creature: "Angel" }), primary: true }));
+      const hex = sel.hex ?? undefined;
+      const out: Action[] = summonSources(view).map((m) => ({
+        label: `Summon Angel from ${m}${hex ? ` @${hex}` : ""}`,
+        dto: dto("SummonAngel", hex ? { fromLegion: m, creature: "Angel", hex } : { fromLegion: m, creature: "Angel" }),
+        primary: true,
+      }));
       out.push({ label: "Decline summon", dto: dto("DeclineSummon") });
       return out;
     }
@@ -217,8 +217,9 @@ export function planMasterboardClick(view: GameStateView, seat: string | null, s
   return { select: { land: landId } };
 }
 
-/** Battleland: select your character, then move it or strike an adjacent enemy. */
-export function planBattleClick(view: GameStateView, seat: string | null, selectedCombatant: string | null, clicked: CubeCoord): ClickPlan {
+/** Battleland: place during deployment, pick a summon hex, select a character,
+ *  move it, or strike an adjacent enemy — depending on the phase. */
+export function planBattleClick(view: GameStateView, seat: string | null, sel: Selection, clicked: CubeCoord): ClickPlan {
   const b = view.battle;
   if (!b || seat === null) return {};
   const side = actorSide(view);
@@ -228,9 +229,30 @@ export function planBattleClick(view: GameStateView, seat: string | null, select
   const clickedKey = cubeKey(clicked);
   const at = b.combatants.find((c) => !c.slain && c.hex && cubeKey(c.hex) === clickedKey);
 
+  // Deployment: place the next unplaced character on a legal, empty zone hex.
+  if (path.endsWith("Deployment")) {
+    const label = labelAt(b.terrain, clickedKey);
+    if (!label || !new Set(deployZoneLabels(b.terrain, side)).has(label)) return {};
+    const taken = new Set([
+      ...b.combatants.filter((c) => c.hex && c.side !== side).map((c) => labelAt(b.terrain, cubeKey(c.hex!))),
+      ...sel.deploy.map((p) => p.hex),
+    ]);
+    if (taken.has(label)) return {};
+    const placed = new Set(sel.deploy.map((p) => p.combatantId));
+    const next = b.combatants.find((c) => c.side === side && !placed.has(c.id));
+    if (!next) return {};
+    return { select: { deploy: [...sel.deploy, { combatantId: next.id, hex: label }] } };
+  }
+
+  // Summon window: clicking an empty hex picks the Angel's landing spot.
+  if ((path.endsWith("Round.Strike") || path.endsWith("Round.Strikeback")) && b.summonPending && seat === b.attackerPlayerId && !at) {
+    const label = labelAt(b.terrain, clickedKey);
+    if (label) return { select: { hex: label } };
+  }
+
   if (at && at.side === side) return { select: { combatant: at.id } };
 
-  const me = selectedCombatant ? b.combatants.find((c) => c.id === selectedCombatant && c.side === side && !c.slain) : undefined;
+  const me = sel.combatant ? b.combatants.find((c) => c.id === sel.combatant && c.side === side && !c.slain) : undefined;
   if (!me || !me.hex) return {};
 
   if (path.endsWith("Round.Maneuver")) {
@@ -330,7 +352,7 @@ export function deployZoneLabels(terrain: string, side: Side): string[] {
   return [...labels];
 }
 
-export function autoDeployPlacements(view: GameStateView, side: Side): Array<{ combatantId: string; hex: string }> {
+export function autoDeployPlacements(view: GameStateView, side: Side): DeployPlacement[] {
   const b = view.battle;
   if (!b) return [];
   const mine = b.combatants.filter((c) => c.side === side);

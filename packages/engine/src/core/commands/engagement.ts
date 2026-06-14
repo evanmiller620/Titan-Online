@@ -10,28 +10,23 @@
  *
  *   SelectEngagementCommand   the moving (attacking) player picks the next
  *                             contested Land to resolve, entering Negotiation.
- *   ResolveEngagementCommand  settle the selected engagement. v1 implements the
- *                             two outcomes that need no tactical battle board:
- *                               - "flee":   the DEFENDER withdraws; their legion
- *                                           is eliminated and the attacker scores
- *                                           its point value (sum of creature
- *                                           powers). The attacker holds the Land.
- *                               - "concede": same elimination/scoring, initiated
- *                                           by the defender conceding.
- *                             Full tactical battle resolution (the Battle subtree
- *                             with Strike/Strikeback) remains available via the
- *                             combat module; this command resolves the
- *                             engagement administratively so play is never stuck.
+ *   ResolveEngagementCommand  resolve the selected engagement two ways — there
+ *                             are NO one-sided concessions:
+ *                               - "fight":  open the tactical Battle subtree and
+ *                                           settle it with steel.
+ *                               - "settle": a NEGOTIATED point-split. The
+ *                                           defender's legion withdraws (removed
+ *                                           to the caretaker pool) and its point
+ *                                           value is divided between the two
+ *                                           players — an even split by default,
+ *                                           or any agreed ratio via
+ *                                           `attackerShare`. The attacker holds
+ *                                           the Land.
  *
  * When the last engagement is resolved, the phase advances to Mustering exactly
- * as the empty-list fast path in EndMovement does — one topology, no special
- * cases.
- *
- * Scoring & elimination are faithful to the rules for the flee/concede case:
- * the surviving side keeps its legion on the Land; the losing legion's creatures
- * return to the caretaker pool; the loser scores nothing; the winner scores the
- * combined point value of the creatures removed. A player who loses their last
- * legion containing the Titan is eliminated (handled by the shared helper).
+ * as the empty-list fast path in EndMovement does. A player who loses their last
+ * Titan-bearing legion is eliminated (shared helper); if one player remains, the
+ * game ends.
  */
 
 import {
@@ -53,9 +48,9 @@ import { pointValue } from "../../creatures/stats.data.ts";
 import { createBattleContext } from "./battle-flow.ts";
 import { awardScore } from "./scoring.ts";
 
-/** Engagement outcomes: flee/concede resolve administratively; fight opens the
- *  tactical Battle subtree (battle-flow.ts drives it to conclusion). */
-export type EngagementOutcome = "flee" | "concede" | "fight";
+/** Engagement outcomes — fight it out, or agree a negotiated point-split. There
+ *  are no concessions. */
+export type EngagementOutcome = "fight" | "settle";
 
 // ---------------------------------------------------------------------------
 
@@ -99,6 +94,9 @@ export class SelectEngagementCommand extends BaseCommand<SelectEngagementPayload
 
 export interface ResolveEngagementPayload {
   readonly outcome: EngagementOutcome;
+  /** For "settle": the attacker's fraction (0–1) of the removed legion's points.
+   *  Defaults to an even split. */
+  readonly attackerShare?: number;
 }
 
 export class ResolveEngagementCommand extends BaseCommand<ResolveEngagementPayload> {
@@ -122,8 +120,8 @@ export class ResolveEngagementCommand extends BaseCommand<ResolveEngagementPaylo
     const active = this.requireActivePlayer(state);
     if (!active.ok) return active;
 
-    if (!["flee", "concede", "fight"].includes(this.payload.outcome)) {
-      return invalid(ValidationCode.ILLEGAL_OUTCOME, "outcome must be 'flee', 'concede', or 'fight'");
+    if (this.payload.outcome !== "fight" && this.payload.outcome !== "settle") {
+      return invalid(ValidationCode.ILLEGAL_OUTCOME, "outcome must be 'fight' or 'settle'");
     }
     return valid;
   }
@@ -148,53 +146,50 @@ export class ResolveEngagementCommand extends BaseCommand<ResolveEngagementPaylo
       this.fireFsm(draft, events, GameEvent.BATTLE_JOINED);
       return;
     }
-    // In both flee and concede, the defender's legion is removed and the
-    // attacker scores its value. (A fuller model would let either side flee;
-    // this minimal resolution always withdraws the non-active defender, which
-    // is the common case and keeps the game completable.)
+    // SETTLE: a negotiated point-split. The defender's legion withdraws (removed
+    // to the caretaker pool) and its point value is divided between both players.
     const losing = defender!;
-    const winningId = attacker!.ownerId;
+    const attackerId = attacker!.ownerId;
+    const defenderId = defender!.ownerId;
 
-    const points = losing.creatures.reduce((sum, c) => sum + pointValue(c), 0);
+    const total = losing.creatures.reduce((sum, c) => sum + pointValue(c), 0);
+    const share = Math.min(1, Math.max(0, this.payload.attackerShare ?? 0.5));
+    const attackerPts = Math.round(total * share);
+    const defenderPts = total - attackerPts;
 
-    // Return the losing legion's creatures to the caretaker pool.
-    for (const c of losing.creatures) {
-      draft.caretaker[c] = (draft.caretaker[c] ?? 0) + 1;
-    }
-    // Remove the losing legion; its marker returns to its owner.
+    // Return the withdrawn legion's creatures to the caretaker pool.
+    for (const c of losing.creatures) draft.caretaker[c] = (draft.caretaker[c] ?? 0) + 1;
     delete draft.legions[losing.marker];
-    const loserPlayer = draft.players[losing.ownerId]!;
-    draft.players[losing.ownerId] = {
+    const loserPlayer = draft.players[defenderId]!;
+    draft.players[defenderId] = {
       ...loserPlayer,
       markersAvailable: [...loserPlayer.markersAvailable, losing.marker].sort(),
     };
 
-    // Score the winner (and grant any Angel/Archangel the new total crosses).
-    awardScore(draft, winningId, points, events);
+    // Split the points (each award also grants any Angel/Archangel crossed).
+    awardScore(draft, attackerId, attackerPts, events);
+    awardScore(draft, defenderId, defenderPts, events);
 
-    // Reveal is moot now (legion gone); emit the public outcome.
     events.push({
       type: "EngagementResolved",
       audience: PUBLIC,
       land,
-      outcome: this.payload.outcome,
-      winnerId: winningId,
-      loserId: losing.ownerId,
-      pointsAwarded: points,
+      outcome: "settle",
+      winnerId: attackerId,
+      loserId: defenderId,
+      pointsAwarded: total,
       eliminatedMarker: losing.marker,
     });
 
-    // Advance the engagement FSM FIRST: clear the selection and step back to
-    // Choosing, then to Mustering if this was the last engagement.
+    // Advance the engagement FSM, then to Mustering if this was the last clash.
     draft.turn = { ...draft.turn, engagementLand: null };
-    this.fireFsm(draft, events, GameEvent.DEFENDER_FLED);
+    this.fireFsm(draft, events, GameEvent.SETTLEMENT_AGREED);
     if (pendingEngagements(draft).length === 0) {
       this.fireFsm(draft, events, GameEvent.ALL_ENGAGEMENTS_RESOLVED);
     }
 
-    // THEN check elimination / game end. Firing GAME_ENDED last means we never
-    // attempt an engagement transition out of the terminal GameOver state.
-    maybeEliminate(draft, losing.ownerId, events);
+    // Elimination / game-end last (settling away a Titan legion is legal).
+    maybeEliminate(draft, defenderId, events);
   }
 }
 

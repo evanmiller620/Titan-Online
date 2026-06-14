@@ -1,29 +1,23 @@
 /**
- * GameEngine (Titan client, game) — the CLIENT-SIDE authority.
+ * GameRunner (Titan engine, module: app) — the authoritative command runner.
  *
- * First principle (new): the rules live with the player, not the server. Each
- * client runs the engine, validates and executes its own commands, and keeps a
- * command log. The server's only jobs are to RELAY commands to every player and
- * PERSIST them so a game survives reconnects and days away.
+ * The engine owns "given an ordered log of commands, produce the exact game
+ * state". A runner validates and executes each command with a DETERMINISTIC
+ * seeded RNG (derived from the game seed + the command's sequence number), keeps
+ * the command log, and can rebuild itself by replay. Two runners fed the same
+ * seed and log reach byte-identical state — so networked peers never diverge and
+ * a reconnecting client restores exact state from the persisted log.
  *
- * Determinism makes that safe: every command is executed with a seeded RNG
- * derived from the game seed + the command's sequence number. Two engines fed
- * the same seed and the same ordered log reach byte-identical state — so peers
- * never diverge and a reconnecting client rebuilds exact state by replaying the
- * log. (Tested in engine.test.ts.)
+ * This used to live in the client; it belongs here, behind the engine's UI
+ * facade (app/index.ts), so the frontend never re-implements the rules runtime.
  */
 
-import {
-  createGame,
-  deserializeCommand,
-  seededRng,
-  scriptedRng,
-  viewFor,
-  type GameState,
-  type GameStateView,
-  type CommandDTO,
-  type DomainEvent,
-} from "@titan/engine";
+import { createGame, type GameState } from "../state/GameState.ts";
+import { viewFor, type GameStateView } from "../state/views.ts";
+import { deserializeCommand } from "../core/commands/registry.ts";
+import { seededRng, scriptedRng } from "../core/rng/Rng.ts";
+import type { CommandDTO } from "../core/commands/Command.ts";
+import type { DomainEvent } from "../core/events/DomainEvent.ts";
 
 export type ApplyResult =
   | { readonly ok: true; readonly events: readonly DomainEvent[]; readonly seq: number }
@@ -41,7 +35,7 @@ export interface EngineSnapshot {
   readonly log: readonly CommandDTO[];
 }
 
-export class GameEngine {
+export class GameRunner {
   private readonly initial: GameState;
   private current: GameState;
   private readonly seats: number;
@@ -59,16 +53,20 @@ export class GameEngine {
     this.seed = seed;
   }
 
-  static fresh(seats: number, seed: number, gameId = "game"): GameEngine {
+  static fresh(seats: number, seed: number, gameId = "game"): GameRunner {
     const players = Array.from({ length: seats }, (_, i) => ({ id: `p${i + 1}`, name: `Player ${i + 1}` }));
-    return new GameEngine(createGame({ gameId, players }), seats, seed);
+    return new GameRunner(createGame({ gameId, players }), seats, seed);
   }
 
-  /** Rebuild an engine by replaying a persisted log (reconnect / load). */
-  static restore(snap: EngineSnapshot): GameEngine {
-    const e = GameEngine.fresh(snap.seats, snap.seed, snap.gameId);
-    for (const dto of snap.log) e.apply(dto);
-    return e;
+  /** Rebuild a runner by replaying a persisted log (reconnect / load). */
+  static restore(snap: EngineSnapshot): GameRunner {
+    const r = GameRunner.fresh(snap.seats, snap.seed, snap.gameId);
+    for (const dto of snap.log) r.apply(dto);
+    return r;
+  }
+
+  static deserialize(text: string): GameRunner {
+    return GameRunner.restore(JSON.parse(text) as EngineSnapshot);
   }
 
   get state(): GameState { return this.current; }
@@ -84,11 +82,7 @@ export class GameEngine {
     return JSON.stringify(this.snapshot());
   }
 
-  static deserialize(text: string): GameEngine {
-    return GameEngine.restore(JSON.parse(text) as EngineSnapshot);
-  }
-
-  /** Validate + execute a command locally with the deterministic RNG. */
+  /** Validate + execute a command with the deterministic RNG. */
   apply(dto: CommandDTO): ApplyResult {
     let cmd;
     try { cmd = deserializeCommand(dto); }

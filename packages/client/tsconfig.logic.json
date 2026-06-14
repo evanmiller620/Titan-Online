@@ -11,11 +11,9 @@
   },
   "include": [
     "src/render/projection.ts",
-    "src/game/legalActions.ts",
     "src/game/transport.ts",
     "src/game/session.ts",
     "src/game/seatRoster.ts",
-    "src/game/engine.ts",
     "src/ui/tokens.ts",
     "src/ui/debugModel.ts",
     "test/pure.test.ts",

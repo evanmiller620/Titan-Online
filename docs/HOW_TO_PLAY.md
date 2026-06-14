@@ -22,7 +22,7 @@ Titan is a dual-layer game, and the UI mirrors that:
 You drive the game through three surfaces, and every action uses one of them:
 
 1. **The command bar (HUD)** — context-sensitive buttons for everything that
-   doesn't need a board target (roll, end phase, fight/flee, deploy, summon…).
+   doesn't need a board target (roll, end phase, fight/settle, deploy, summon…).
    The bar only shows the actions that are *legal right now for you*.
 2. **Masterboard clicks** — click a land to select your legion there, then click
    a destination land to move it.
@@ -48,7 +48,7 @@ SETUP                roll for order → pick Towers → pick colors
 TURN (repeats per player, clockwise)
   ├─ Commencement   split legions (the turn-1 split is mandatory)
   ├─ Movement       roll the die, move every legion that can move
-  ├─ Engagement     resolve each clash: flee, concede, or fight a battle
+  ├─ Engagement     resolve each clash: fight a battle, or a point-split settlement
   └─ Mustering      each moved legion may recruit one creature, then end turn
   │
   ▼
@@ -112,8 +112,9 @@ If any of your legions ended on an enemy-occupied land, you resolve each clash.
 - **Choosing:** the bar lists **"Resolve clash at N"** for each contested land.
   Click one.
 - **Negotiation:** choose the outcome — **"Fight"** (play out a tactical battle),
-  **"Make them flee"** (defender withdraws; you take the land and score their
-  legion), or **"Concede"**.
+  or a **settlement** — a negotiated point-split where the defender's legion
+  withdraws and its point value is divided between the two players (even split or
+  attacker-takes-all). There are no one-sided concessions.
 
 ### Battle (when you choose Fight)
 
@@ -168,7 +169,9 @@ button; *Board* = a board click.
 | Titan power-teleport | `TitanTeleport` | CB — "Titan-teleport to N" (legion selected) |
 | Finish moving | `EndMovement` | CB — "End movement" |
 | Pick a clash to resolve | `SelectEngagement` | CB — "Resolve clash at N" |
-| Flee / concede / fight | `ResolveEngagement` | CB — "Make them flee" / "Concede" / "Fight" |
+| Fight or settle (point-split) | `ResolveEngagement` | CB — "Fight" / "Settle — split points" / "Settle — take all" |
+| Deploy to battle (manual) | `DeployLegion` | Board — click hexes to place each character, then "Deploy legion" |
+| Summon Angel to a chosen hex | `SummonAngel` | Board — click a hex, then "Summon Angel from …" |
 | Deploy a legion to battle | `DeployLegion` | CB — "Deploy legion" (auto-places) |
 | Move a combatant | `MoveCombatant` | Board — select character, click hex |
 | Finish maneuvering | `EndManeuvers` | CB — "End maneuvers" |

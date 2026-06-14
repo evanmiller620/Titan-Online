@@ -42,6 +42,7 @@ import {
 import { unmovedButAble } from "./movement.ts";
 import {
   MAX_LEGION_HEIGHT,
+  MIN_LEGION_HEIGHT,
   type CreatureName,
 } from "../../creatures/names.ts";
 
@@ -108,10 +109,13 @@ export class SplitLegionCommand extends BaseCommand<SplitLegionPayload> {
         );
       }
     } else {
-      if (childHeight < 2 || parentHeight < 2) {
+      // Avalon Hill: a legion is 2–7 characters, so a split may never leave
+      // either side below the minimum (single-counter legions are illegal
+      // except a combat-reduced Titan, which a split can never produce).
+      if (childHeight < MIN_LEGION_HEIGHT || parentHeight < MIN_LEGION_HEIGHT) {
         return invalid(
           ValidationCode.ILLEGAL_SPLIT,
-          "both legions of a split must contain at least two characters",
+          `both legions of a split must contain at least ${MIN_LEGION_HEIGHT} characters`,
         );
       }
     }

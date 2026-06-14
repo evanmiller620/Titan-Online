@@ -1,7 +1,7 @@
 /**
  * Transport (Titan client, game) — the seam between the UI and the network.
  *
- * Both transports run the SAME client-authoritative GameEngine. The difference
+ * Both transports run the SAME client-authoritative GameRunner. The difference
  * is only how commands travel:
  *   - LocalTransport: hot-seat, no network. Apply immediately. Dev-capable.
  *   - RelayTransport: the server is a dumb relay + store (no rule checking). A
@@ -11,7 +11,7 @@
  */
 
 import type { GameStateView, CommandDTO, DomainEvent } from "@titan/engine";
-import { GameEngine, type EngineSnapshot } from "./engine.ts";
+import { GameRunner, type EngineSnapshot } from "@titan/engine";
 
 export type SubmitResult = { readonly ok: true } | { readonly ok: false; readonly code: string; readonly message: string };
 
@@ -46,15 +46,15 @@ export interface Transport {
 export class LocalTransport implements Transport {
   readonly mode = "local" as const;
   lastEvents: readonly DomainEvent[] = [];
-  private engine: GameEngine;
+  private engine: GameRunner;
   private readonly listeners = new Set<() => void>();
 
-  constructor(engine: GameEngine) {
+  constructor(engine: GameRunner) {
     this.engine = engine;
   }
 
   static newGame(seats: number, seed = Date.now() >>> 0): LocalTransport {
-    return new LocalTransport(GameEngine.fresh(seats, seed));
+    return new LocalTransport(GameRunner.fresh(seats, seed));
   }
 
   viewFor(seat: string | null): GameStateView {
@@ -85,7 +85,7 @@ export class LocalTransport implements Transport {
       let text: string | null = null;
       try { text = localStorage.getItem(SAVE_PREFIX + slot); } catch { /* unavailable */ }
       if (!text) return false;
-      this.engine = GameEngine.deserialize(text);
+      this.engine = GameRunner.deserialize(text);
       this.lastEvents = [];
       this.emit();
       return true;
@@ -111,7 +111,7 @@ export interface RelayDeps {
 export class RelayTransport implements Transport {
   readonly mode = "relay" as const;
   lastEvents: readonly DomainEvent[] = [];
-  private engine: GameEngine | null = null;
+  private engine: GameRunner | null = null;
   private readonly deps: RelayDeps;
   private readonly listeners = new Set<() => void>();
   private unsub: (() => void) | null = null;
@@ -128,7 +128,7 @@ export class RelayTransport implements Transport {
     // 1-based and equals the post-apply sequence number.
     this.unsub = this.deps.subscribe((dto, seq) => this.ingest(dto, seq));
     const snap = await this.deps.load();
-    this.engine = GameEngine.restore(snap);
+    this.engine = GameRunner.restore(snap);
     this.nextSeq = this.engine.sequence + 1;
     this.drain();
     this.emit();
@@ -162,7 +162,7 @@ export class RelayTransport implements Transport {
   async submit(dto: CommandDTO): Promise<SubmitResult> {
     // Validate locally for instant feedback; the authoritative apply happens
     // when the command echoes back in order (keeps every peer in lockstep).
-    const probe = GameEngine.restore(this.engine!.snapshot());
+    const probe = GameRunner.restore(this.engine!.snapshot());
     const local = probe.apply(dto);
     if (!local.ok) return { ok: false, code: local.code, message: local.message };
     const r = await this.deps.send(dto);

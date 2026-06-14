@@ -13,7 +13,7 @@ import { MasterboardRenderer } from "../render/MasterboardRenderer.ts";
 import { BattlelandRenderer } from "../render/BattlelandRenderer.ts";
 import { Inspector } from "../ui/Inspector.ts";
 import { GameSession } from "../game/session.ts";
-import { planMasterboardClick, planBattleClick, seatActsNow, battleBanner } from "../game/legalActions.ts";
+import { planMasterboardClick, planBattleClick, seatActsNow, battleBanner } from "@titan/engine";
 import { elem, txt, eyebrow, chip, button, input, theme } from "../ui/dom.ts";
 import { type as typ } from "../ui/tokens.ts";
 import type { DomainEvent } from "@titan/engine";
@@ -89,7 +89,7 @@ export class GameView {
   private onBattleClick(cube: { x: number; y: number; z: number }): void {
     const v = this.session.view();
     if (!v) return;
-    const plan = planBattleClick(v, this.session.focusedSeat, this.session.getSelection().combatant, cube);
+    const plan = planBattleClick(v, this.session.focusedSeat, this.session.getSelection(), cube);
     if (plan.dto) void this.submit(plan.dto);
     else if (plan.select) this.session.select(plan.select);
   }
@@ -184,7 +184,8 @@ export class GameView {
     if (v.battle) {
       this.board.setVisible(false);
       this.battle?.setVisible(true);
-      this.battle?.render(v, this.session.getSelection().combatant);
+      const sel = this.session.getSelection();
+      this.battle?.render(v, sel.combatant, sel.deploy.map((p) => p.hex), sel.hex);
     } else {
       this.board.setVisible(true);
       this.battle?.setVisible(false);

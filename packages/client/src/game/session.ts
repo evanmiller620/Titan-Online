@@ -11,7 +11,7 @@
 
 import type { GameStateView, CommandDTO } from "@titan/engine";
 import type { Transport, SubmitResult, DevControls } from "./transport.ts";
-import { legalActions, NO_SELECTION, type Action, type Selection } from "./legalActions.ts";
+import { legalActions, NO_SELECTION, type Action, type Selection } from "@titan/engine";
 
 export interface Seat {
   readonly slot: string; // "p1"

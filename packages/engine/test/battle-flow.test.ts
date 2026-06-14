@@ -283,6 +283,26 @@ describe("strike → first-blood Angel summon (§7.5)", () => {
     const declined = exec(s, new DeclineSummonCommand("A", {}));
     assert.ok(!declined.state.battle!.summonPending && declined.state.battle!.summonUsed);
   });
+
+  it("places the summoned Angel on a chosen hex", () => {
+    const s = buildBattle({
+      phase: "Strike", activeSide: "attacker", summonPending: true,
+      atk: [{ creature: "Ogre", label: "C3" }], def: [{ creature: "Centaur", label: "C4" }],
+      homes: [{ marker: "Black-05", owner: "A", creatures: ["Angel"] }],
+    });
+    const { state } = exec(s, new SummonAngelCommand("A", { fromLegion: "Black-05", hex: "A1" }));
+    const angel = state.battle!.combatants.find((c) => c.side === "attacker" && c.creature === "Angel")!;
+    assert.deepEqual(angel.hex, cubeOf("A1"));
+  });
+
+  it("rejects summoning onto an occupied hex", () => {
+    const s = buildBattle({
+      phase: "Strike", activeSide: "attacker", summonPending: true,
+      atk: [{ creature: "Ogre", label: "C3" }], def: [{ creature: "Centaur", label: "C4" }],
+      homes: [{ marker: "Black-05", owner: "A", creatures: ["Angel"] }],
+    });
+    rejects(s, new SummonAngelCommand("A", { fromLegion: "Black-05", hex: "C3" }), ValidationCode.ILLEGAL_SUMMON);
+  });
 });
 
 describe("conclusion & scoring (§8)", () => {

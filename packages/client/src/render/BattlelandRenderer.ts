@@ -57,8 +57,10 @@ export class BattlelandRenderer {
     this.app.stage.addChild(this.layer);
   }
 
-  /** Draw a battle from the redacted snapshot's battle context. */
-  render(view: GameStateView, selected: string | null): void {
+  /** Draw a battle from the redacted snapshot's battle context. `pendingHexes`
+   *  are manual deployment placements not yet submitted; `markHex` is a chosen
+   *  target (e.g. an Angel-summon landing spot) — both drawn as markers. */
+  render(view: GameStateView, selected: string | null, pendingHexes: readonly string[] = [], markHex: string | null = null): void {
     this.layer.removeChildren();
     const battle = view.battle;
     if (!battle) return;
@@ -140,6 +142,25 @@ export class BattlelandRenderer {
         dmg.x = center.x + this.layout.size * 0.4;
         dmg.y = center.y + this.layout.size * 0.4;
         this.layer.addChild(dmg);
+      }
+    }
+
+    // Pending manual-deployment placements (not yet submitted) + a chosen target.
+    const byLabel = new Map(map.hexes.map((h) => [h.label, h.cube]));
+    for (const label of pendingHexes) {
+      const cube = byLabel.get(label);
+      if (!cube) continue;
+      const p = cubeToPixelFlat(cube, this.layout);
+      this.layer.addChild(new Graphics().circle(p.x, p.y, this.layout.size * 0.5)
+        .fill({ color: hex(palette.oxblood), alpha: 0.4 })
+        .stroke({ color: hex(palette.brassBright), width: 2 }));
+    }
+    if (markHex) {
+      const cube = byLabel.get(markHex);
+      if (cube) {
+        const p = cubeToPixelFlat(cube, this.layout);
+        this.layer.addChild(new Graphics().circle(p.x, p.y, this.layout.size * 0.55)
+          .stroke({ color: hex(palette.brassBright), width: 3 }));
       }
     }
   }
