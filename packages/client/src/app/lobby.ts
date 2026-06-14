@@ -46,11 +46,45 @@ export async function createTable(
   return String(data);
 }
 
-/** Take the next free seat in a lobby game. Returns the assigned slot. */
+/**
+ * Take the next free seat in a lobby game, or RESUME the seat you already hold.
+ * Returns the assigned slot.
+ *
+ * join_game raises "already joined" if this user is already at the table (the
+ * founder, a page reload, or a rejoin). That isn't an error from the player's
+ * point of view — they just want back into their game — so we look up their
+ * existing slot via my_slot() and resume it instead of failing.
+ */
 export async function joinTable(client: SupabaseClient, gameId: string): Promise<string> {
   const { data, error } = await client.rpc("join_game", { p_game_id: gameId });
-  if (error) throw new Error(`could not join: ${describe(error)}`);
-  return String(data);
+  if (!error) return String(data);
+
+  if (/already joined/i.test(describe(error))) {
+    const slot = await mySlot(client, gameId);
+    if (slot) return slot;
+  }
+  throw new Error(`could not join: ${describe(error)}`);
+}
+
+/** The caller's existing slot in a game, or null if they aren't a member. */
+async function mySlot(client: SupabaseClient, gameId: string): Promise<string | null> {
+  // Prefer the my_slot() helper (SECURITY DEFINER, reads auth.uid()).
+  const viaRpc = await client.rpc("my_slot", { p_game_id: gameId });
+  if (!viaRpc.error && viaRpc.data != null) return String(viaRpc.data);
+
+  // Fallback: read our own membership row directly. Allowed by the
+  // game_players_select_members policy since we're a member of this game.
+  const { data: userData } = await client.auth.getUser();
+  const uid = userData.user?.id;
+  if (!uid) return null;
+  const { data, error } = await client
+    .from("game_players")
+    .select("slot")
+    .eq("game_id", gameId)
+    .eq("user_id", uid)
+    .single();
+  if (error || !data) return null;
+  return String((data as { slot: string }).slot);
 }
 
 /** List joinable tables for the lobby browser. */
