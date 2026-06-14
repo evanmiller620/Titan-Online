@@ -15,7 +15,7 @@
 
 import { Application, Container, Graphics, Text } from "pixi.js";
 import { MASTER_LANDS, type GameStateView } from "@titan/engine";
-import { masterLandToPixel, nearestLand, type BoardExtent, type Point } from "./projection.ts";
+import { masterLandToPixel, nearestLand, hexCornersFlat, type BoardExtent, type Point } from "./projection.ts";
 import { palette, terrainColor } from "../ui/tokens.ts";
 
 const hex = (s: string) => parseInt(s.replace("#", ""), 16);
@@ -121,13 +121,14 @@ export class MasterboardRenderer {
       if (isTarget) {
         const halo = new Graphics();
         halo
-          .circle(c.x, c.y, r + 4)
+          .poly(hexPoly(c, r + 5))
           .fill({ color: hex(palette.verdigris), alpha: 0.22 })
           .stroke({ color: hex(palette.verdigris), width: 2.5, alpha: 0.95 });
         this.layer.addChild(halo);
       }
 
-      g.circle(c.x, c.y, r)
+      // Lands are hexagons (the board is a tessellated wheel, not dots).
+      g.poly(hexPoly(c, r))
         .fill({ color: fill, alpha: isTower ? 1 : 0.92 })
         .stroke({
           color: isSel
@@ -153,28 +154,40 @@ export class MasterboardRenderer {
       this.layer.addChild(label);
     }
 
-    // Legion seals — hidden stacks shown as banner discs with height pips.
+    // Legion seals — grouped by land so STACKED legions all show (fanned out)
+    // rather than overlapping into one. Each is a wax seal: banner colour +
+    // height pips, never contents.
+    const byLand = new Map<number, GameStateView["legions"][string][]>();
     for (const legion of Object.values(view.legions)) {
-      const c = posById.get(legion.land);
+      const arr = byLand.get(legion.land) ?? [];
+      arr.push(legion);
+      byLand.set(legion.land, arr);
+    }
+    for (const [land, legs] of byLand) {
+      const c = posById.get(land);
       if (!c) continue;
-      const player = view.players[legion.ownerId] as { color?: string } | undefined;
-      this.drawSeal(c, legion, r, player?.color ?? null);
+      const n = legs.length;
+      const sr = n > 1 ? r * 0.46 : r * 0.6;
+      legs.forEach((legion, i) => {
+        const color = (view.players[legion.ownerId] as { color?: string } | undefined)?.color ?? null;
+        const pos = n === 1
+          ? { x: c.x + r * 0.42, y: c.y - r * 0.42 }
+          : fanAround(c, r * 0.5, i, n);
+        this.drawSeal(pos.x, pos.y, legion, sr, color);
+      });
     }
   }
 
-  /** A legion as a wax-seal disc: banner colour + height pips, never contents. */
+  /** A legion as a wax-seal disc at (sx,sy): banner colour + height pips. */
   private drawSeal(
-    c: Point,
+    sx: number,
+    sy: number,
     legion: GameStateView["legions"][string],
-    r: number,
+    sr: number,
     bannerColor: string | null,
   ): void {
     const color = (bannerColor && SLOT_BANNER[bannerColor]) || palette.seal;
     const seal = new Graphics();
-    const sr = r * 0.62;
-    // Offset the seal up-right so the land number stays readable.
-    const sx = c.x + r * 0.5;
-    const sy = c.y - r * 0.5;
     seal
       .circle(sx, sy, sr)
       .fill({ color: hex(color), alpha: 0.95 })
@@ -200,4 +213,20 @@ export class MasterboardRenderer {
     const ev = e as { global?: { x: number; y: number } };
     return ev.global ? { x: ev.global.x - this.layer.x, y: ev.global.y - this.layer.y } : { x: 0, y: 0 };
   }
+}
+
+/** Flat-top hexagon polygon (flattened x,y pairs) for a land cell. */
+function hexPoly(center: Point, size: number): number[] {
+  const pts: number[] = [];
+  for (const c of hexCornersFlat(center, size)) pts.push(c.x, c.y);
+  return pts;
+}
+
+/** The i-th of n seals fanned in an arc above the land centre, so a stack of
+ *  legions on one land all stay visible instead of overlapping. */
+function fanAround(center: Point, radius: number, i: number, n: number): Point {
+  if (n <= 1) return { x: center.x, y: center.y };
+  const spread = Math.PI * 0.9;
+  const a = -Math.PI / 2 - spread / 2 + (spread * i) / (n - 1);
+  return { x: center.x + Math.cos(a) * radius, y: center.y + Math.sin(a) * radius };
 }

@@ -11,6 +11,7 @@ import {
 import {
   legalActions, planMasterboardClick, planBattleClick,
   autoDeployPlacements, deployZoneLabels, proposeInitialSplit, battleBanner,
+  seatLegions, reachableLands,
   NO_SELECTION, type Selection,
 } from "@titan/engine";
 
@@ -56,6 +57,26 @@ describe("legalActions — setup & turn phases", () => {
     const dest = destinationsForRoll(leg.land, 3)[0]!.destination;
     const plan = planMasterboardClick(v, "p1", sel({ legion: leg.marker }), dest);
     assert.equal(plan.dto?.type, "MoveLegion");
+  });
+
+  it("seatLegions lists a seat's legions with terrain, height, and contents", () => {
+    const s = afterSetup();
+    const info = seatLegions(viewFor(s, "p1"), "p1");
+    assert.equal(info.length, 1);
+    assert.equal(info[0]!.height, 8);
+    assert.ok(info[0]!.creatures?.includes("Titan"));
+    assert.equal(typeof info[0]!.terrain, "string");
+  });
+
+  it("reachableLands reports a movable legion's destinations during Movement", () => {
+    let s = afterSetup();
+    s = new SplitLegionCommand("p1", proposeInitialSplit(viewFor(s, "p1"), "p1") as any).execute(s, scriptedRng([])).state;
+    s = new EndSplitsCommand("p1", {}).execute(s, scriptedRng([])).state;
+    s = new RollMovementCommand("p1", {}).execute(s, scriptedRng([3])).state;
+    const v = viewFor(s, "p1");
+    const leg = Object.values(v.legions).find((l) => l.ownerId === "p1")!;
+    assert.ok(reachableLands(v, "p1", leg.marker).length > 0);
+    assert.deepEqual(reachableLands(v, "p1", "nope"), []);
   });
 
   it("negotiation offers fight and point-split settlements (no concession)", () => {

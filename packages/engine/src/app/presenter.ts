@@ -379,3 +379,49 @@ function labelAt(terrain: string, key: string): string {
   const h = BATTLE_MAPS[terrain]!.hexes.find((x) => cubeKey(x.cube) === key);
   return h ? h.label : "";
 }
+
+// ---------------------------------------------------------------------------
+// UI queries — "what are my legions" and "where can this one move"
+// ---------------------------------------------------------------------------
+
+export interface LegionInfo {
+  readonly marker: string;
+  readonly land: number;
+  readonly terrain: string;
+  readonly height: number;
+  /** Present when the seat owns the legion (or it is revealed). */
+  readonly creatures?: readonly string[];
+  readonly moved: boolean;
+  readonly recruited: boolean;
+  /** Legal masterboard destinations right now (empty unless it's Movement and
+   *  the legion can still move). */
+  readonly destinations: readonly number[];
+}
+
+/** A seat's own legions with the detail a roster panel shows. */
+export function seatLegions(view: GameStateView, seat: string): LegionInfo[] {
+  return Object.values(view.legions)
+    .filter((l) => l.ownerId === seat)
+    .sort((a, b) => a.marker.localeCompare(b.marker))
+    .map((l) => ({
+      marker: l.marker,
+      land: l.land,
+      terrain: getLand(l.land)?.terrain ?? "—",
+      height: l.height,
+      creatures: l.creatures,
+      moved: l.moved,
+      recruited: l.recruitedThisTurn,
+      destinations: reachableLands(view, seat, l.marker),
+    }));
+}
+
+/** The legal destination lands for a seat's legion during Movement (for board
+ *  highlighting), or an empty list when it can't move now. */
+export function reachableLands(view: GameStateView, seat: string, marker: string): number[] {
+  if (!view.fsm.path.endsWith("Movement") || view.turn.movementRoll == null) return [];
+  const leg = view.legions[marker];
+  if (!leg || leg.ownerId !== seat || leg.moved) return [];
+  return destinationsForRoll(leg.land, view.turn.movementRoll)
+    .map((d) => d.destination)
+    .filter((d) => !Object.values(view.legions).some((o) => o.ownerId === seat && o.marker !== marker && o.land === d));
+}

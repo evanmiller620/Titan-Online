@@ -13,7 +13,7 @@ import { MasterboardRenderer } from "../render/MasterboardRenderer.ts";
 import { BattlelandRenderer } from "../render/BattlelandRenderer.ts";
 import { Inspector } from "../ui/Inspector.ts";
 import { GameSession } from "../game/session.ts";
-import { planMasterboardClick, planBattleClick, seatActsNow, battleBanner } from "@titan/engine";
+import { planMasterboardClick, planBattleClick, seatActsNow, battleBanner, seatLegions, reachableLands } from "@titan/engine";
 import { elem, txt, eyebrow, chip, button, input, theme } from "../ui/dom.ts";
 import { type as typ } from "../ui/tokens.ts";
 import type { DomainEvent } from "@titan/engine";
@@ -29,6 +29,7 @@ export class GameView {
   private seatRow!: HTMLElement;
   private bar!: HTMLElement;
   private status!: HTMLElement;
+  private legionsEl!: HTMLElement;
   private logEl!: HTMLElement;
   private devEl!: HTMLElement;
   private readonly forceField = input("dice e.g. 6,6,1");
@@ -49,11 +50,13 @@ export class GameView {
     this.seatRow = elem("div", "display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px");
     this.bar = elem("div", "display:flex;flex-direction:column;gap:8px");
     this.status = elem("div", `margin-top:12px;min-height:18px;font-size:${typ.scale.sm};line-height:1.4`);
+    this.legionsEl = elem("div", "display:flex;flex-direction:column;gap:4px;margin-top:6px");
     this.devEl = elem("div", "display:flex;flex-direction:column;gap:6px;margin-top:6px");
     this.logEl = elem("div", `margin-top:6px;font-family:${typ.mono};font-size:11px;line-height:1.5;color:${theme.dim};white-space:pre-wrap`);
     const control = elem("aside", `width:320px;flex:0 0 320px;height:100%;overflow:auto;padding:16px;background:${theme.bg};border-left:1px solid ${theme.brass};color:${theme.ink}`, {
       children: [
         this.seatRow, this.bar, this.status,
+        elem("div", "margin-top:16px", { children: [eyebrow("Your legions")] }), this.legionsEl,
         elem("div", "margin-top:16px", { children: [eyebrow("Developer")] }), this.devEl,
         elem("div", "margin-top:16px", { children: [eyebrow("Event log (verbose)")] }), this.logEl,
       ],
@@ -148,6 +151,7 @@ export class GameView {
     this.inspector.update(v);
     this.renderSeats(v);
     this.renderBar();
+    this.renderLegions(v);
     this.renderDev();
     this.renderBoard(v);
     this.logEl.replaceChildren(...this.log.map((line) => elem("div", "padding:1px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis", { text: line })));
@@ -179,6 +183,34 @@ export class GameView {
     this.bar.replaceChildren(...kids);
   }
 
+  private renderLegions(v: GameStateView | null): void {
+    if (!v) { this.legionsEl.replaceChildren(); return; }
+    const seat = this.session.focusedSeat;
+    const legions = seatLegions(v, seat);
+    const selected = this.session.getSelection().legion;
+    if (legions.length === 0) { this.legionsEl.replaceChildren(txt("No legions.", theme.dim, "11px")); return; }
+    this.legionsEl.replaceChildren(...legions.map((l) => {
+      const isSel = l.marker === selected;
+      const tags: string[] = [`@${l.land} ${l.terrain}`, `h${l.height}`];
+      if (l.moved) tags.push("moved");
+      if (l.recruited) tags.push("recruited");
+      if (l.destinations.length) tags.push(`${l.destinations.length} moves`);
+      const row = elem("div", [
+        "padding:6px 8px", "border-radius:4px", "cursor:pointer",
+        `border:1px solid ${isSel ? theme.accent : theme.line}`,
+        `background:${isSel ? "#2B2F36" : "transparent"}`,
+      ].join(";"), {
+        onClick: () => { this.session.select({ legion: l.marker, combatant: null }); this.render(); },
+        children: [
+          elem("div", `font-family:${typ.mono};font-size:12px;color:${theme.brassBright}`, { text: l.marker }),
+          elem("div", `font-size:11px;color:${theme.dim};margin-top:2px`, { text: tags.join(" · ") }),
+          ...(l.creatures ? [elem("div", `font-size:11px;color:${theme.ink};margin-top:2px;word-break:break-word`, { text: l.creatures.join(", ") })] : []),
+        ],
+      });
+      return row;
+    }));
+  }
+
   private renderBoard(v: GameStateView | null): void {
     if (!this.board || !v) return;
     if (v.battle) {
@@ -191,7 +223,9 @@ export class GameView {
       this.battle?.setVisible(false);
       const legion = this.session.getSelection().legion;
       const land = legion && v.legions[legion] ? v.legions[legion]!.land : null;
-      this.board.render(v, land, null);
+      // Highlight a selected legion's legal destinations during Movement.
+      const reach = legion ? new Set(reachableLands(v, this.session.focusedSeat, legion)) : new Set<number>();
+      this.board.render(v, land, null, reach);
     }
   }
 }
