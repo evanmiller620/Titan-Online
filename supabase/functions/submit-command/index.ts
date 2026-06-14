@@ -46,10 +46,21 @@ interface SubmitBody {
   readonly command: { type: string; playerId: string; payload: unknown };
 }
 
+// Permissive CORS so the browser client can call this from any origin (the
+// Vercel/Pages domain). Lowest-friction setting: allow all origins. Security
+// is unaffected — this function still authenticates every request from the
+// Authorization bearer token below; CORS only governs which web origins the
+// browser will let issue the call.
+const CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...CORS },
   });
 }
 
@@ -62,6 +73,9 @@ function freshSeed(): number {
 
 // @ts-ignore — Deno.serve is the Edge entrypoint.
 Deno.serve(async (req: Request): Promise<Response> => {
+  // Preflight: the browser sends OPTIONS (with no auth) before the real POST.
+  // Answer it with the CORS headers and no body, or the actual call is blocked.
+  if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return json(405, { error: "POST only" });
 
   // --- 1. Authenticate ----------------------------------------------------
