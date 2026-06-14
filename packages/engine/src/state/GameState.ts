@@ -122,6 +122,10 @@ export interface BattleContext {
   readonly summonUsed: boolean;
   readonly firstKillHappened: boolean;
   readonly reinforcementUsed: boolean;
+  /** Set by a strike that scores the attacker's first kill: the attacker owes
+   *  an immediate summon decision (SummonAngel / DeclineSummon) before the
+   *  strike phase may end. Cleared once resolved. */
+  readonly summonPending?: boolean;
   readonly combatants: readonly Combatant[];
 }
 

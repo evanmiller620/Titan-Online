@@ -167,7 +167,31 @@ export class StrikeCommand extends BaseCommand<StrikePayload> {
     combatants = combatants.map((c) =>
       c.id === striker.id ? { ...c, struckThisPhase: true } : c,
     );
-    draft.battle = { ...battle, combatants };
+
+    // First blood (§7.5): the attacker's first kill opens an immediate Angel
+    // summon window, IF an Angel/Archangel sits in another unengaged legion and
+    // the battle force is below the cap. Tracked as a flag; resolved by
+    // SummonAngel/DeclineSummon before the strike phase may end.
+    let firstKillHappened = battle.firstKillHappened;
+    let summonPending = battle.summonPending ?? false;
+    const killedDefender = events.some(
+      (e) => e.type === "CombatantSlain" && e.side === "defender",
+    );
+    if (striker.side === "attacker" && killedDefender && !battle.firstKillHappened) {
+      firstKillHappened = true;
+      const onBoardAttackers = combatants.filter((c) => c.side === "attacker" && !c.slain).length;
+      const angelAvailable =
+        onBoardAttackers < 7 &&
+        Object.values(draft.legions).some(
+          (l) =>
+            l.ownerId === battle.attackerPlayerId &&
+            l.marker !== battle.attackerLegion &&
+            l.creatures.some((c) => c === "Angel" || c === "Archangel"),
+        );
+      if (angelAvailable) summonPending = true;
+    }
+
+    draft.battle = { ...battle, combatants, firstKillHappened, summonPending };
 
     events.push({
       type: "StrikeResolved",

@@ -46,10 +46,10 @@ export const RECRUIT_CHAINS: Readonly<
   Hills: [{ creature: "Ogre", needPrev: 1 }, { creature: "Minotaur", needPrev: 3 }, { creature: "Unicorn", needPrev: 2 }],
   Jungle: [{ creature: "Gargoyle", needPrev: 1 }, { creature: "Cyclops", needPrev: 2 }, { creature: "Behemoth", needPrev: 3 }, { creature: "Serpent", needPrev: 2 }],
   Marsh: [{ creature: "Ogre", needPrev: 1 }, { creature: "Troll", needPrev: 2 }, { creature: "Ranger", needPrev: 2 }],
-  Mountains: [{ creature: "Lion", needPrev: 1 }, { creature: "Minotaur", needPrev: 2 }, { creature: "Dragon", needPrev: 2 }, { creature: "Colossus", needPrev: 2 }],
+  Mountains: [{ creature: "Lion", needPrev: 1 }, { creature: "Minotaur", needPrev: 2 }, { creature: "Dragon", needPrev: 3 }, { creature: "Colossus", needPrev: 2 }],
   Plains: [{ creature: "Centaur", needPrev: 1 }, { creature: "Lion", needPrev: 2 }, { creature: "Ranger", needPrev: 2 }],
   Swamp: [{ creature: "Troll", needPrev: 1 }, { creature: "Wyvern", needPrev: 3 }, { creature: "Hydra", needPrev: 2 }],
-  Tundra: [{ creature: "Troll", needPrev: 1 }, { creature: "Warbear", needPrev: 2 }, { creature: "Giant", needPrev: 2 }, { creature: "Colossus", needPrev: 2 }],
+  Tundra: [{ creature: "Troll", needPrev: 1 }, { creature: "Warbear", needPrev: 2 }, { creature: "Giant", needPrev: 3 }, { creature: "Colossus", needPrev: 2 }],
   Woods: [{ creature: "Centaur", needPrev: 1 }, { creature: "Warbear", needPrev: 3 }, { creature: "Unicorn", needPrev: 2 }],};
 
 /** The three Tower creatures any legion may muster on a Tower land. */

@@ -34,6 +34,15 @@ import {
 import { MusterCommand } from "./mustering.ts";
 import { StrikeCommand } from "./battle-strike.ts";
 import { SelectEngagementCommand, ResolveEngagementCommand } from "./engagement.ts";
+import {
+  DeployLegionCommand,
+  MoveCombatantCommand,
+  EndManeuversCommand,
+  EndStrikesCommand,
+  SummonAngelCommand,
+  DeclineSummonCommand,
+  ReinforceBattleCommand,
+} from "./battle-flow.ts";
 
 export class UnknownCommandError extends Error {
   constructor(type: string) {
@@ -81,6 +90,13 @@ register(MusterCommand.TYPE, MusterCommand);
 register(StrikeCommand.TYPE, StrikeCommand);
 register(SelectEngagementCommand.TYPE, SelectEngagementCommand);
 register(ResolveEngagementCommand.TYPE, ResolveEngagementCommand);
+register(DeployLegionCommand.TYPE, DeployLegionCommand);
+register(MoveCombatantCommand.TYPE, MoveCombatantCommand);
+register(EndManeuversCommand.TYPE, EndManeuversCommand);
+register(EndStrikesCommand.TYPE, EndStrikesCommand);
+register(SummonAngelCommand.TYPE, SummonAngelCommand);
+register(DeclineSummonCommand.TYPE, DeclineSummonCommand);
+register(ReinforceBattleCommand.TYPE, ReinforceBattleCommand);
 
 export const COMMAND_TYPES: readonly string[] = [...REGISTRY.keys()];
 

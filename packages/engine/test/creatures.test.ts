@@ -167,7 +167,9 @@ describe("recruitment logic — regular terrain chains", () => {
   it("Mountains four-tier chain: Lion→Minotaur→Dragon→Colossus, each one step", () => {
     assert.ok(canRecruit("Mountains", ["Lion"], "Lion", FULL));
     assert.ok(canRecruit("Mountains", ["Lion", "Lion"], "Minotaur", FULL)); // 2 lions→minotaur
-    assert.ok(canRecruit("Mountains", ["Minotaur", "Minotaur"], "Dragon", FULL));
+    // A Dragon needs THREE Minotaurs (Law of Titan §5.4); two do not suffice.
+    assert.ok(canRecruit("Mountains", ["Minotaur", "Minotaur", "Minotaur"], "Dragon", FULL));
+    assert.ok(!canRecruit("Mountains", ["Minotaur", "Minotaur"], "Dragon", FULL));
     assert.ok(canRecruit("Mountains", ["Dragon", "Dragon"], "Colossus", FULL));
     assert.ok(!canRecruit("Mountains", ["Lion", "Lion"], "Dragon", FULL));
   });

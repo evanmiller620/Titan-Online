@@ -138,10 +138,17 @@ export class BattlelandRenderer {
     }
   }
 
-  attachInput(cb: BattlelandCallbacks, view: GameStateView): void {
+  /** Show or hide this board (the app toggles between master/battle boards). */
+  setVisible(visible: boolean): void {
+    this.layer.visible = visible;
+  }
+
+  /** Wire hex clicks. `getView` returns the LATEST snapshot so the handler is
+   *  never stale as the battle advances. */
+  attachInput(cb: BattlelandCallbacks, getView: () => GameStateView | null): void {
     this.layer.eventMode = "static";
     this.layer.on("pointertap", (e: unknown) => {
-      const battle = view.battle;
+      const battle = getView()?.battle;
       if (!battle) return;
       const map = BATTLE_MAPS[battle.terrain];
       if (!map) return;

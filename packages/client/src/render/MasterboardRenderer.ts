@@ -55,6 +55,11 @@ export class MasterboardRenderer {
     }));
   }
 
+  /** Show or hide this board (the app toggles between master/battle boards). */
+  setVisible(visible: boolean): void {
+    this.layer.visible = visible;
+  }
+
   /** Wire pointer events. Call once after construction. */
   attachInput(cb: MasterboardCallbacks): void {
     this.layer.eventMode = "static";

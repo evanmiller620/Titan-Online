@@ -17,10 +17,15 @@ import type { CommandDTO } from "@titan/engine";
 import {
   type StoreState,
   isMyTurn,
-  inputsLocked,
   phaseLabel,
   activeSlot,
 } from "../store/gameStore.ts";
+import {
+  availableActions,
+  battleBanner,
+  battleInputsLocked,
+  viewerActsInBattle,
+} from "../app/battleUi.ts";
 import { palette, type as typ, space } from "./tokens.ts";
 
 export interface HudProps {
@@ -41,9 +46,10 @@ export const Hud: FC<HudProps> = ({ store, onCommand }) => {
   }
 
   const myTurn = isMyTurn(store);
-  const locked = inputsLocked(store);
+  const locked = battleInputsLocked(store);
   const slot = store.viewerSlot;
   const phase = phaseLabel(store);
+  const banner = battleBanner(store);
 
   const issue = (type: string, payload: Record<string, unknown> = {}) => {
     if (slot === null) return;
@@ -68,7 +74,7 @@ export const Hud: FC<HudProps> = ({ store, onCommand }) => {
               color: palette.verdigris,
             },
           },
-          `Turn ${view.turn.number} · ${labelForActive(store)}`,
+          banner ?? `Turn ${view.turn.number} · ${labelForActive(store)}`,
         ),
         el(
           "div",
@@ -90,38 +96,30 @@ export const Hud: FC<HudProps> = ({ store, onCommand }) => {
   );
 };
 
-/** Phase-appropriate buttons. Names are the exact action that happens. */
+/** Phase-appropriate buttons. Names are the exact action that happens. The
+ *  full set (incl. engagement and every battle phase) comes from the shared,
+ *  unit-tested `availableActions` model so the HUD and tests never drift. */
 function commandButtons(
   store: StoreState,
-  myTurn: boolean,
+  _myTurn: boolean,
   locked: boolean,
   issue: (type: string, payload?: Record<string, unknown>) => void,
 ): unknown[] {
-  const path = store.snapshot?.fsm.path ?? "";
-  const btns: Array<{ label: string; type: string; payload?: Record<string, unknown>; primary?: boolean }> = [];
+  const inBattle = store.snapshot?.battle != null;
+  const canAct = inBattle ? viewerActsInBattle(store) : isMyTurn(store);
+  const actions = availableActions(store);
 
-  if (!myTurn) return [el("span", { key: "wait", style: hintStyle }, `${activeSlot(store) ?? "Another player"} is playing`)];
-
-  if (path.endsWith("Commencement")) {
-    btns.push({ label: "End splits", type: "EndSplits", primary: true });
-  } else if (path.endsWith("Movement")) {
-    const rolled = store.snapshot?.turn.movementRoll != null;
-    if (!rolled) btns.push({ label: "Roll movement", type: "RollMovement", primary: true });
-    else {
-      btns.push({ label: "End movement", type: "EndMovement", primary: true });
-      if (store.snapshot?.turn.number === 1 && !store.snapshot.turn.mulliganUsed) {
-        btns.push({ label: "Take mulligan", type: "TakeMulligan" });
-      }
-    }
-  } else if (path.endsWith("Mustering")) {
-    btns.push({ label: "End turn", type: "EndTurn", primary: true });
+  if (actions.length === 0) {
+    if (canAct) return [];
+    const who = inBattle ? "The other side" : `${activeSlot(store) ?? "Another player"}`;
+    return [el("span", { key: "wait", style: hintStyle }, `${who} is playing`)];
   }
 
-  return btns.map((b) =>
+  return actions.map((b, i) =>
     el(
       "button",
       {
-        key: b.type,
+        key: `${b.type}-${i}`,
         disabled: locked,
         onClick: () => issue(b.type, b.payload),
         style: buttonStyle(b.primary === true, locked),

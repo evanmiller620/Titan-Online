@@ -27,6 +27,9 @@ import {
 } from "../store/gameStore.ts";
 import { submitCommand, subscribeGame, fetchSnapshot } from "../net/supabase.ts";
 import { MasterboardRenderer } from "../render/MasterboardRenderer.ts";
+import { BattlelandRenderer } from "../render/BattlelandRenderer.ts";
+import { planBattleClick } from "./battleUi.ts";
+import type { GameStateView } from "@titan/engine";
 
 export interface GameViewProps {
   readonly client: SupabaseClient;
@@ -52,8 +55,13 @@ export function useGame(props: GameViewProps): {
     (s: StoreState) => ({ ...s, viewerSlot: props.viewerSlot }),
   );
   const boardRef = useRef<MasterboardRenderer | null>(null);
+  const battleRef = useRef<BattlelandRenderer | null>(null);
   const subsRef = useRef<ReturnType<typeof subscribeGame> | null>(null);
   const appRef = useRef<Application | null>(null);
+  // Live refs so the (once-wired) board click handlers never read stale data.
+  const viewRef = useRef<GameStateView | null>(null);
+  const selRef = useRef<string | null>(null);
+  const issueRef = useRef<((dto: CommandDTO) => void) | null>(null);
 
   // --- board + subscription lifecycle ------------------------------------
   useEffect(() => {
@@ -75,6 +83,24 @@ export function useGame(props: GameViewProps): {
         onLandHover: (landId) => dispatch({ type: "hover", id: landId === null ? null : String(landId) }),
       });
       boardRef.current = board;
+
+      // Battle board (hidden until a battle is joined). Hex clicks route through
+      // the pure planBattleClick decision: select a character, move it, or strike.
+      const battle = new BattlelandRenderer(app, app.canvas.width, app.canvas.height);
+      battle.setVisible(false);
+      battle.attachInput(
+        {
+          onHexClick: (cube) => {
+            const view = viewRef.current;
+            if (!view) return;
+            const plan = planBattleClick(view, props.viewerSlot, selRef.current, cube);
+            if (plan.command) issueRef.current?.(plan.command);
+            else if (plan.select !== undefined) dispatch({ type: "select", id: plan.select });
+          },
+        },
+        () => viewRef.current,
+      );
+      battleRef.current = battle;
 
       // 2. Authoritative subscription.
       subsRef.current = subscribeGame(
@@ -99,13 +125,30 @@ export function useGame(props: GameViewProps): {
       subsRef.current?.unsubscribe();
       appRef.current?.destroy(true);
       boardRef.current = null;
+      battleRef.current = null;
     };
   }, [props.client, props.gameId, props.mountRef]);
 
   // --- redraw board whenever the snapshot or selection changes -----------
   useEffect(() => {
+    // Keep the live refs current for the board click handlers.
+    viewRef.current = store.snapshot;
+    selRef.current = store.selection.selected;
+
     const board = boardRef.current;
+    const battle = battleRef.current;
     if (!board || !store.snapshot) return;
+
+    if (store.snapshot.battle) {
+      // Tactical layer: show the battleland, hide the masterboard.
+      board.setVisible(false);
+      battle?.setVisible(true);
+      battle?.render(store.snapshot, store.selection.selected);
+      return;
+    }
+
+    board.setVisible(true);
+    battle?.setVisible(false);
     const sel = store.selection.selected ? Number(store.selection.selected) : null;
     const hov = store.selection.hovered ? Number(store.selection.hovered) : null;
     board.render(store.snapshot, Number.isNaN(sel as number) ? null : sel, Number.isNaN(hov as number) ? null : hov);
@@ -125,6 +168,8 @@ export function useGame(props: GameViewProps): {
     },
     [props.client, props.gameId],
   );
+  // Expose the latest issuer to the board click handler (wired once).
+  issueRef.current = issueCommand;
 
   const sendHover = useCallback(
     (landId: number | null) => {

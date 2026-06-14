@@ -50,9 +50,11 @@ import { PUBLIC } from "../events/DomainEvent.ts";
 import type { Rng } from "../rng/Rng.ts";
 import { legionsAt, pendingEngagements } from "../../state/selectors.ts";
 import { pointValue } from "../../creatures/stats.data.ts";
+import { createBattleContext } from "./battle-flow.ts";
 
-/** The two administrative outcomes this module resolves without a battle board. */
-export type EngagementOutcome = "flee" | "concede";
+/** Engagement outcomes: flee/concede resolve administratively; fight opens the
+ *  tactical Battle subtree (battle-flow.ts drives it to conclusion). */
+export type EngagementOutcome = "flee" | "concede" | "fight";
 
 // ---------------------------------------------------------------------------
 
@@ -119,8 +121,8 @@ export class ResolveEngagementCommand extends BaseCommand<ResolveEngagementPaylo
     const active = this.requireActivePlayer(state);
     if (!active.ok) return active;
 
-    if (this.payload.outcome !== "flee" && this.payload.outcome !== "concede") {
-      return invalid(ValidationCode.ILLEGAL_OUTCOME, "outcome must be 'flee' or 'concede'");
+    if (!["flee", "concede", "fight"].includes(this.payload.outcome)) {
+      return invalid(ValidationCode.ILLEGAL_OUTCOME, "outcome must be 'flee', 'concede', or 'fight'");
     }
     return valid;
   }
@@ -128,6 +130,23 @@ export class ResolveEngagementCommand extends BaseCommand<ResolveEngagementPaylo
   protected override apply(draft: Draft, _rng: Rng, events: DomainEvent[]): void {
     const land = draft.turn.engagementLand as LandId;
     const { attacker, defender } = sidesAt(draft, land, this.playerId);
+
+    // FIGHT: open the tactical battle instead of resolving administratively.
+    if (this.payload.outcome === "fight") {
+      draft.legions[attacker!.marker] = { ...draft.legions[attacker!.marker]!, revealed: true };
+      draft.legions[defender!.marker] = { ...draft.legions[defender!.marker]!, revealed: true };
+      draft.battle = createBattleContext(
+        draft, land, attacker!.marker, defender!.marker, attacker!.ownerId, defender!.ownerId,
+      );
+      events.push({
+        type: "BattleJoined", audience: PUBLIC,
+        land, terrain: draft.battle.terrain,
+        attackerLegion: attacker!.marker, defenderLegion: defender!.marker,
+        attackerId: attacker!.ownerId, defenderId: defender!.ownerId,
+      });
+      this.fireFsm(draft, events, GameEvent.BATTLE_JOINED);
+      return;
+    }
     // In both flee and concede, the defender's legion is removed and the
     // attacker scores its value. (A fuller model would let either side flee;
     // this minimal resolution always withdraws the non-active defender, which

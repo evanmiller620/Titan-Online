@@ -178,6 +178,67 @@ export interface EngagementResolved extends EventBase {
   readonly eliminatedMarker: string;
 }
 
+/** A negotiation ended in a fight: the tactical battle begins. */
+export interface BattleJoined extends EventBase {
+  readonly type: "BattleJoined";
+  readonly land: LandId;
+  readonly terrain: string;
+  readonly attackerLegion: LegionId;
+  readonly defenderLegion: LegionId;
+  readonly attackerId: PlayerId;
+  readonly defenderId: PlayerId;
+}
+
+/** A side placed its combatants on the battleland. */
+export interface LegionDeployed extends EventBase {
+  readonly type: "LegionDeployed";
+  readonly side: "attacker" | "defender";
+  readonly playerId: PlayerId;
+}
+
+/** The battle advanced a phase / half-turn. */
+export interface BattlePhaseAdvanced extends EventBase {
+  readonly type: "BattlePhaseAdvanced";
+  readonly round: number;
+  readonly activeSide: "attacker" | "defender";
+  readonly phase: string;
+}
+
+/** The attacker summoned an Angel/Archangel after first blood. */
+export interface AngelSummoned extends EventBase {
+  readonly type: "AngelSummoned";
+  readonly playerId: PlayerId;
+  readonly creature: CreatureName;
+  readonly fromLegion: LegionId;
+}
+
+/** The defender mustered a round-4 reinforcement onto the battleland. */
+export interface BattleReinforced extends EventBase {
+  readonly type: "BattleReinforced";
+  readonly playerId: PlayerId;
+  readonly creature: CreatureName;
+}
+
+/** A battle resolved: winner, points, and how it ended. */
+export interface BattleConcluded extends EventBase {
+  readonly type: "BattleConcluded";
+  readonly land: LandId;
+  /** "attacker" | "defender" | "mutual" (both Titans died) */
+  readonly outcome: string;
+  readonly winnerId: PlayerId | null;
+  readonly loserId: PlayerId | null;
+  readonly pointsAwarded: number;
+  readonly timeLoss: boolean;
+}
+
+/** The victor inherited an eliminated player's legion markers. */
+export interface MarkersInherited extends EventBase {
+  readonly type: "MarkersInherited";
+  readonly heirId: PlayerId;
+  readonly fromId: PlayerId;
+  readonly markers: readonly LegionId[];
+}
+
 export interface PlayerEliminated extends EventBase {
   readonly type: "PlayerEliminated";
   readonly playerId: PlayerId;
@@ -206,6 +267,13 @@ export type DomainEvent =
   | TurnEnded
   | EngagementSelected
   | EngagementResolved
+  | BattleJoined
+  | LegionDeployed
+  | BattlePhaseAdvanced
+  | AngelSummoned
+  | BattleReinforced
+  | BattleConcluded
+  | MarkersInherited
   | PlayerEliminated
   | GameEnded;
 

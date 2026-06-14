@@ -12,8 +12,10 @@
   "include": [
     "src/render/projection.ts",
     "src/store/gameStore.ts",
+    "src/app/battleUi.ts",
     "src/ui/tokens.ts",
     "test/pure.test.ts",
+    "test/battle-ui.test.ts",
     "test/node-builtins.d.ts"
   ]
 }
