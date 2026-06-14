@@ -11,15 +11,16 @@
   },
   "include": [
     "src/render/projection.ts",
-    "src/store/gameStore.ts",
     "src/game/legalActions.ts",
     "src/game/transport.ts",
     "src/game/session.ts",
+    "src/game/seatRoster.ts",
     "src/ui/tokens.ts",
     "src/ui/debugModel.ts",
     "test/pure.test.ts",
     "test/legalActions.test.ts",
     "test/session.test.ts",
+    "test/seatRoster.test.ts",
     "test/debug-model.test.ts",
     "test/node-builtins.d.ts"
   ]

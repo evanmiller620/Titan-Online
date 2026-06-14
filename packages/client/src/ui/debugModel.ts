@@ -1,7 +1,7 @@
 /**
  * Debug model (Titan client, ui) — PURE data-shaping for the debug panel.
  *
- * The panel itself (DebugPanel.ts) is DOM and browser-only; everything that can
+ * The Inspector view is DOM and browser-only; everything that can
  * be a deterministic read over the snapshot lives here so it is unit-testable:
  *   - fsmTopology()    the whole GameFSM state tree, statically, from the def.
  *   - activeChain()    the set of path-prefixes lit up by the current FSM path.

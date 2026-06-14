@@ -19,7 +19,6 @@
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { CommandDTO, GameStateView } from "@titan/engine";
-import type { StoreEvent } from "../store/gameStore.ts";
 
 export interface NetConfig {
   readonly supabaseUrl: string;
@@ -76,7 +75,7 @@ export interface Subscriptions {
 export function subscribeGame(
   client: SupabaseClient,
   gameId: string,
-  dispatch: (e: StoreEvent) => void,
+  onSnapshot: (view: GameStateView, version: number) => void,
   onPresence: (members: unknown[]) => void,
   onBroadcast: (event: string, payload: Record<string, unknown>) => void,
 ): Subscriptions {
@@ -89,7 +88,7 @@ export function subscribeGame(
       (payload: unknown) => {
         const row = (payload as { new?: { public_state?: GameStateView; version?: number } }).new;
         if (row?.public_state && typeof row.version === "number") {
-          dispatch({ type: "snapshot", version: row.version, view: row.public_state });
+          onSnapshot(row.public_state, row.version);
         }
       },
     )
