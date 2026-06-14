@@ -67,6 +67,27 @@ export async function joinTable(client: SupabaseClient, gameId: string): Promise
   throw new Error(`could not join: ${describe(error)}`);
 }
 
+/** The caller's existing slot in a game, or null if they aren't a member. */
+async function mySlot(client: SupabaseClient, gameId: string): Promise<string | null> {
+  // Prefer the my_slot() helper (SECURITY DEFINER, reads auth.uid()).
+  const viaRpc = await client.rpc("my_slot", { p_game_id: gameId });
+  if (!viaRpc.error && viaRpc.data != null) return String(viaRpc.data);
+
+  // Fallback: read our own membership row directly. Allowed by the
+  // game_players_select_members policy since we're a member of this game.
+  const { data: userData } = await client.auth.getUser();
+  const uid = userData.user?.id;
+  if (!uid) return null;
+  const { data, error } = await client
+    .from("game_players")
+    .select("slot")
+    .eq("game_id", gameId)
+    .eq("user_id", uid)
+    .single();
+  if (error || !data) return null;
+  return String((data as { slot: string }).slot);
+}
+
 /** List joinable tables for the lobby browser. */
 export async function openTables(
   client: SupabaseClient,
