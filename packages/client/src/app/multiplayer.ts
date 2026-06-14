@@ -28,12 +28,22 @@ import {
   type StoreState,
 } from "../store/gameStore.ts";
 import { MasterboardRenderer } from "../render/MasterboardRenderer.ts";
-import { actionsFor, isViewersMove, terrainOf, type Selection } from "./actions.ts";
+import { actionsFor, isViewersMove, terrainOf, moveDestinations, engagementLands, type Selection } from "./actions.ts";
 import { palette, tokensCss, type as typ, space } from "../ui/tokens.ts";
 
 // ---------------------------------------------------------------------------
 // Bootstrap
 // ---------------------------------------------------------------------------
+
+/** Banner colours for the scoreboard dots (mirrors the renderer's seals). */
+const SLOT_HEX: Record<string, string> = {
+  Black: "#26221E",
+  Brown: "#6B4A2B",
+  Blue: "#2C4A6B",
+  Gold: "#B08D57",
+  Green: "#3E6B45",
+  Red: "#8E3247",
+};
 
 /** Inject the token :root block once (mirrors preview.ts). */
 function injectTokens(): void {
@@ -201,6 +211,9 @@ async function startGame(
   const phaseLine = panel.appendChild(node("div", [`font-size:${typ.scale.sm}`, "margin-bottom:6px"]));
   const rosterLine = panel.appendChild(node("div", [`font-size:${typ.scale.sm}`, `color:${palette.inkSoft}`, "margin-bottom:16px"]));
 
+  // Live scoreboard — every player's banner colour, score, and standing.
+  const scoreEl = panel.appendChild(node("div", ["margin-bottom:16px"]));
+
   // The command bar (phase-driven buttons) and a contextual help line.
   const barEl = panel.appendChild(node("div", ["display:flex", "flex-direction:column", "gap:8px", "margin-top:4px"]));
   const helpLine = panel.appendChild(
@@ -257,9 +270,20 @@ async function startGame(
 
   function paintBoard(): void {
     if (!store.snapshot) return;
-    const sel = selLand ?? (selLegion ? store.snapshot.legions[selLegion]?.land ?? null : null);
+    const view = store.snapshot;
+    const sel = selLand ?? (selLegion ? view.legions[selLegion]?.land ?? null : null);
     const hov = store.selection.hovered !== null ? Number(store.selection.hovered) : null;
-    renderer.render(store.snapshot, sel ?? null, Number.isNaN(hov) ? null : hov);
+
+    // Highlight legal targets: a selected legion's reachable lands during
+    // Movement, or all contested lands during the Engagement phase.
+    const highlights = new Set<number>();
+    if (view.fsm.path === "Turn.Movement" && selLegion) {
+      for (const d of moveDestinations(view, selLegion)) highlights.add(d);
+    } else if (view.fsm.path.startsWith("Turn.Engagement")) {
+      for (const land of engagementLands(view)) highlights.add(land);
+    }
+
+    renderer.render(view, sel ?? null, Number.isNaN(hov) ? null : hov, highlights);
   }
 
   function submit(dto: CommandDTO): void {
@@ -280,11 +304,18 @@ async function startGame(
     const view = store.snapshot;
     if (!view) {
       phaseLine.textContent = "Waiting for the table…";
+      scoreEl.replaceChildren();
     } else {
       const active = activeSlot(store);
-      phaseLine.innerHTML =
-        `Phase: <strong>${escape(phaseLabel(store))}</strong>` +
-        (active ? ` · active: ${escape(active)}` : "");
+      const yourTurn = active === slot;
+      const over = view.fsm.path === "GameOver";
+      // A clear banner: whose turn / what phase, emphasised when it's yours.
+      phaseLine.innerHTML = over
+        ? `<span style="color:${palette.oxblood};font-weight:700">Game over</span>`
+        : `<span style="color:${yourTurn ? palette.oxblood : palette.inkSoft};font-weight:${yourTurn ? 700 : 500}">` +
+          `${yourTurn ? "Your move" : `${escape(active ?? "—")}'s move`}</span>` +
+          ` · <strong>${escape(phaseLabel(store))}</strong> · turn ${view.turn.number}`;
+      paintScoreboard(view);
     }
     rosterLine.textContent =
       roster.length > 0 ? `At the table: ${roster.join(", ")}` : "You're the only one here so far.";
@@ -295,9 +326,10 @@ async function startGame(
 
     if (view) {
       const myMove = isViewersMove(view, slot);
-      if (!myMove) {
-        helpLine.textContent =
-          view.fsm.path === "GameOver" ? "The game is over." : "Waiting for the other player…";
+      if (view.fsm.path === "GameOver") {
+        helpLine.innerHTML = winnerLine(view);
+      } else if (!myMove) {
+        helpLine.textContent = "Waiting for the other player…";
       } else {
         const actions = actionsFor(view, slot, { legion: selLegion, land: selLand } as Selection);
         const submitting = store.command.kind === "submitting";
@@ -307,12 +339,19 @@ async function startGame(
           b.disabled = submitting;
           b.onclick = () => submit(a.dto);
           barEl.appendChild(b);
+          if (a.hint) {
+            const h = node("div", [`font-size:${typ.scale.xs}`, `color:${palette.inkSoft}`, "margin:-2px 0 4px"]);
+            h.textContent = a.hint;
+            barEl.appendChild(h);
+          }
         }
         // Contextual help for the spatial phases.
         if (view.fsm.path === "Turn.Movement" && view.turn.movementRoll != null) {
           helpLine.textContent = selLegion
-            ? `Selected ${selLegion} (at land ${view.legions[selLegion]?.land}, terrain ${terrainOf(view.legions[selLegion]?.land ?? 0)}). Tap a destination land.`
-            : "Tap one of your legions, then a destination land.";
+            ? `Selected ${selLegion} at land ${view.legions[selLegion]?.land} (${terrainOf(view.legions[selLegion]?.land ?? 0)}). Reachable lands glow green — tap one.`
+            : `Rolled ${view.turn.movementRoll}. Tap one of your legions, then a glowing destination.`;
+        } else if (view.fsm.path.startsWith("Turn.Engagement")) {
+          helpLine.textContent = "Contested lands glow green. Resolve each engagement.";
         } else if (actions.length === 0) {
           helpLine.textContent = "Nothing to do in this phase yet.";
         }
@@ -328,6 +367,46 @@ async function startGame(
     } else {
       statusLine.textContent = "";
     }
+  }
+
+  /** Render the per-player scoreboard from the authoritative view. */
+  function paintScoreboard(view: NonNullable<typeof store.snapshot>): void {
+    const rows = view.playerOrder.map((pid) => {
+      const p = view.players[pid] as { color?: string; score?: number; eliminated?: boolean } | undefined;
+      const color = (p?.color && SLOT_HEX[p.color]) || palette.seal;
+      const isActive = activeSlot(store) === pid;
+      const isYou = pid === slot;
+      const dead = p?.eliminated === true;
+      return (
+        `<div style="display:flex;align-items:center;gap:8px;padding:3px 0;opacity:${dead ? 0.45 : 1}">` +
+        `<span style="width:11px;height:11px;border-radius:50%;background:${color};` +
+        `box-shadow:${isActive ? `0 0 0 2px ${palette.oxblood}` : "none"};flex:0 0 auto"></span>` +
+        `<span style="flex:1;font-size:${typ.scale.sm};${isYou ? "font-weight:700" : ""}">` +
+        `${escape(pid)}${isYou ? " (you)" : ""}${dead ? " — out" : ""}</span>` +
+        `<span style="font-family:${typ.mono};font-size:${typ.scale.sm};color:${palette.inkSoft}">${p?.score ?? 0}</span>` +
+        `</div>`
+      );
+    });
+    scoreEl.innerHTML =
+      `<div style="letter-spacing:.16em;text-transform:uppercase;color:${palette.verdigris};` +
+      `font-size:${typ.scale.xs};margin-bottom:4px">Standings</div>` + rows.join("");
+  }
+
+  /** A celebratory winner line for the game-over state. */
+  function winnerLine(view: NonNullable<typeof store.snapshot>): string {
+    const survivors = view.playerOrder.filter((pid) => {
+      const p = view.players[pid] as { eliminated?: boolean } | undefined;
+      return p?.eliminated !== true;
+    });
+    const winner = survivors[0];
+    if (!winner) return "The game has ended.";
+    const youWon = winner === slot;
+    return (
+      `<span style="font-family:${typ.display};font-size:${typ.scale.lg};color:${palette.oxblood}">` +
+      `${youWon ? "Victory" : `${escape(winner)} wins`}</span>` +
+      `<br><span style="font-size:${typ.scale.sm};color:${palette.inkSoft}">` +
+      `${youWon ? "Your Titan stands alone on the wheel." : "Their Titan stands alone on the wheel."}</span>`
+    );
   }
 
   // --- realtime + presence --------------------------------------------------

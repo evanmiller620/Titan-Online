@@ -59,3 +59,39 @@ tests.**
 - Full 3-turn game simulation runs with zero rejected commands.
 - The new commands flow through `deserializeCommand`, so the vendored-engine
   Edge Function accepts them with no backend changes.
+
+## 3. More end-to-end tests + UX polish
+
+**End-to-end gameplay tests** (`packages/engine/test/e2e.test.ts`, with a
+reusable driver in `test/_harness.ts`): complete multi-turn games; games at
+every player count 2–6 (setup, towers, colours, starting legions, one full
+round each); turn rotation following the roll order with correct wrapping;
+recruiting inside a real turn (height grows, caretaker pool decrements,
+once-per-turn enforced); two engagements resolved in sequence within one turn;
+losing the Titan ending the game; the turn-1 mulligan (re-rolls once, then
+unavailable, and unavailable after turn 1); hidden-information redaction holding
+from both viewpoints across a whole game; and negative paths (out-of-turn /
+out-of-phase commands refused, not silently applied). **Engine: 225 tests**
+(up from 210).
+
+The harness reads the engine's own state (whose turn, which legions, legal
+destinations, actual marker colours) rather than hard-coding, so a change in
+board data can't silently invalidate a test. Two tests initially hard-coded a
+"Red" opponent; fixed to read the opponent's real marker/tower from state.
+
+**UX polish** (`multiplayer.ts`, `MasterboardRenderer.ts`):
+
+- **Legal-target highlighting.** The board now haloes a selected legion's
+  reachable lands during Movement and all contested lands during Engagement, in
+  verdigris — so players see where they can go at a glance instead of guessing.
+- **A live scoreboard** in the side panel: each player's banner-colour dot,
+  score, active-turn ring, "(you)" marker, and a dimmed "— out" for eliminated
+  players.
+- **A clearer turn banner** ("Your move" in oxblood vs "<player>'s move",
+  phase, turn number) and phase-specific help copy that points at the glowing
+  targets.
+- **A game-over treatment**: a "Victory" / "<player> wins" banner with flavour.
+- **Action hints** surfaced beneath buttons (e.g. why End-splits is gated).
+
+New client coverage asserts the highlight helpers match the engine's own legal
+destinations and contested lands. **Client: 20 tests.**

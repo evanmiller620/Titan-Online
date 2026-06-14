@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 // tests do. The app code uses the alias, which the Vite bundler resolves to
 // this same source.
 import * as E from "../../engine/src/index.ts";
-import { actionsFor, isViewersMove, moveDestinations } from "../src/app/actions.ts";
+import { actionsFor, isViewersMove, moveDestinations, engagementLands } from "../src/app/actions.ts";
 
 type AnyState = ReturnType<typeof E.createGame>;
 
@@ -129,6 +129,34 @@ describe("client action builder (playable command bar)", () => {
 
     const negotiating = viewActions(s, "p1").list;
     assert.ok(negotiating.some((x) => x.dto.type === "ResolveEngagement"), "resolution offered");
+  });
+
+  it("exposes board-highlight helpers for the UI (legal targets glow)", () => {
+    let s = setupTo(s0());
+    const split = viewActions(s, "p1").list.find((x) => x.dto.type === "SplitLegion")!;
+    s = run(s, new E.SplitLegionCommand("p1", split.dto.payload as never));
+    s = run(s, new E.EndSplitsCommand("p1", {}));
+    s = run(s, new E.RollMovementCommand("p1", {}), E.scriptedRng([3]));
+
+    // moveDestinations matches the engine's own destinationsForRoll.
+    const view = E.viewFor(s, "p1");
+    const leg = Object.values(view.legions).find((l) => l.ownerId === "p1")!;
+    const fromHelper = moveDestinations(view as any, leg.marker).sort((a, b) => a - b);
+    const fromEngine = E.destinationsForRoll(leg.land, 3).map((d) => d.destination).sort((a, b) => a - b);
+    assert.deepEqual(fromHelper, fromEngine, "highlight set equals the engine's legal destinations");
+    assert.ok(fromHelper.length > 0);
+
+    // Force an engagement and confirm engagementLands reports it.
+    s = {
+      ...s,
+      legions: {
+        ...s.legions,
+        "Black-01": { ...s.legions["Black-01"]!, land: 400, moved: true },
+        "Black-02": { ...s.legions["Black-02"]!, land: 37, moved: true },
+      },
+    } as AnyState;
+    s = run(s, new E.EndMovementCommand("p1", {}));
+    assert.deepEqual(engagementLands(E.viewFor(s, "p1") as any), [400]);
   });
 });
 

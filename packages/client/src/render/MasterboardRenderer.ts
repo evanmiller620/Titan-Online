@@ -71,7 +71,12 @@ export class MasterboardRenderer {
   }
 
   /** Re-draw the whole board from a redacted snapshot. Idempotent. */
-  render(view: GameStateView, selectedLand: number | null, hoveredLand: number | null): void {
+  render(
+    view: GameStateView,
+    selectedLand: number | null,
+    hoveredLand: number | null,
+    highlightLands: ReadonlySet<number> = new Set(),
+  ): void {
     this.layer.removeChildren();
     const r = this.cellRadius();
 
@@ -92,12 +97,30 @@ export class MasterboardRenderer {
       const isTower = land.terrain === "Tower";
       const isSel = land.id === selectedLand;
       const isHover = land.id === hoveredLand;
+      const isTarget = highlightLands.has(land.id);
+
+      // A legal-destination / target halo behind the land, so reachable lands
+      // read at a glance during Movement and Engagement.
+      if (isTarget) {
+        const halo = new Graphics();
+        halo
+          .circle(c.x, c.y, r + 4)
+          .fill({ color: hex(palette.verdigris), alpha: 0.22 })
+          .stroke({ color: hex(palette.verdigris), width: 2.5, alpha: 0.95 });
+        this.layer.addChild(halo);
+      }
 
       g.circle(c.x, c.y, r)
         .fill({ color: fill, alpha: isTower ? 1 : 0.92 })
         .stroke({
-          color: isSel ? hex(palette.oxbloodBright) : isTower ? hex(palette.brassBright) : hex(palette.parchmentEdge),
-          width: isSel ? 3 : isHover ? 2 : 1,
+          color: isSel
+            ? hex(palette.oxbloodBright)
+            : isTarget
+              ? hex(palette.verdigris)
+              : isTower
+                ? hex(palette.brassBright)
+                : hex(palette.parchmentEdge),
+          width: isSel ? 3 : isTarget ? 2.5 : isHover ? 2 : 1,
           alpha: 1,
         });
       this.layer.addChild(g);
