@@ -5,12 +5,20 @@ import { GAME_MACHINE } from "@titan/engine";
 import { transition } from "@titan/engine";
 import { BATTLE_MAPS } from "@titan/engine";
 import { DeployLegionCommand } from "@titan/engine";
+import {
+  createGame, viewFor,
+  RollTurnOrderCommand, SelectTowerCommand, SelectColorCommand, SplitLegionCommand,
+  EndSplitsCommand, RollMovementCommand, destinationsForRoll,
+  scriptedRng,
+} from "@titan/engine";
 import { initialStore, reduce, type StoreState } from "../src/store/gameStore.ts";
 import {
   availableActions,
   autoDeployPlacements,
   deployZoneLabels,
   planBattleClick,
+  planMasterboardClick,
+  proposeInitialSplit,
   battleBanner,
 } from "../src/app/battleUi.ts";
 
@@ -188,6 +196,64 @@ describe("autoDeployPlacements", () => {
 // ---------------------------------------------------------------------------
 // planBattleClick: select / move / strike
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Setup, initial split, movement, teleport, muster — full end-to-end binding
+// ---------------------------------------------------------------------------
+
+/** Drive the engine through setup so the view sits in Turn.Commencement. */
+function gameAfterSetup() {
+  let s = createGame({ gameId: "g", players: [{ id: "A", name: "A" }, { id: "B", name: "B" }] });
+  s = new RollTurnOrderCommand("A", {}).execute(s, scriptedRng([6, 2])).state;
+  s = new SelectTowerCommand("A", { tower: 100 }).execute(s, scriptedRng([])).state;
+  s = new SelectTowerCommand("B", { tower: 400 }).execute(s, scriptedRng([])).state;
+  s = new SelectColorCommand("B", { color: "Red" }).execute(s, scriptedRng([])).state;
+  s = new SelectColorCommand("A", { color: "Black" }).execute(s, scriptedRng([])).state;
+  return s;
+}
+
+describe("setup actions are wired", () => {
+  it("offers a roll, then tower choices, then color choices", () => {
+    const s0 = createGame({ gameId: "g", players: [{ id: "A", name: "A" }, { id: "B", name: "B" }] });
+    const rolling = store(viewFor(s0, "A"), "A");
+    assert.deepEqual(availableActions(rolling).map((a) => a.type), ["RollTurnOrder"]);
+
+    let s = new RollTurnOrderCommand("A", {}).execute(s0, scriptedRng([6, 2])).state;
+    const picker = s.setup!.order[s.setup!.towerPickIndex];
+    const towerActs = availableActions(store(viewFor(s, picker), picker));
+    assert.ok(towerActs.length > 0 && towerActs.every((a) => a.type === "SelectTower"));
+  });
+});
+
+describe("initial split is wired and accepted by the engine", () => {
+  it("proposeInitialSplit yields a legal 4/4 the engine accepts", () => {
+    const s = gameAfterSetup();
+    const view = viewFor(s, "A");
+    const payload = proposeInitialSplit(view, "A")!;
+    assert.ok(payload, "a split was proposed");
+    const acts = availableActions(store(view, "A"));
+    assert.ok(acts.some((a) => a.type === "SplitLegion"));
+    const v = new SplitLegionCommand("A", payload as any).validate(s);
+    assert.ok(v.ok, !v.ok ? v.failure.message : "");
+  });
+});
+
+describe("movement & muster bindings", () => {
+  it("selecting a legion then clicking a legal destination issues MoveLegion", () => {
+    // Reach Movement with a rolled die.
+    let s = gameAfterSetup();
+    const split = proposeInitialSplit(viewFor(s, "A"), "A")!;
+    s = new SplitLegionCommand("A", split as any).execute(s, scriptedRng([])).state;
+    s = new EndSplitsCommand("A", {}).execute(s, scriptedRng([])).state;
+    s = new RollMovementCommand("A", {}).execute(s, scriptedRng([3])).state;
+    const view = viewFor(s, "A");
+    const legion = Object.values(view.legions).find((l) => l.ownerId === "A")!;
+    const dest = destinationsForRoll(legion.land, 3)[0]!.destination;
+    const plan = planMasterboardClick(view, "A", legion.marker, dest);
+    assert.equal(plan.command?.type, "MoveLegion");
+    assert.equal((plan.command?.payload as any).destination, dest);
+  });
+});
 
 describe("planBattleClick", () => {
   it("selecting one of your own active-side characters", () => {

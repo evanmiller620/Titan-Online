@@ -28,7 +28,7 @@ import {
 import { submitCommand, subscribeGame, fetchSnapshot } from "../net/supabase.ts";
 import { MasterboardRenderer } from "../render/MasterboardRenderer.ts";
 import { BattlelandRenderer } from "../render/BattlelandRenderer.ts";
-import { planBattleClick } from "./battleUi.ts";
+import { planBattleClick, planMasterboardClick } from "./battleUi.ts";
 import type { GameStateView } from "@titan/engine";
 
 export interface GameViewProps {
@@ -79,7 +79,16 @@ export function useGame(props: GameViewProps): {
       props.mountRef.current?.appendChild(app.canvas);
       const board = new MasterboardRenderer(app, app.canvas.width, app.canvas.height);
       board.attachInput({
-        onLandClick: (landId) => dispatch({ type: "select", id: String(landId) }),
+        onLandClick: (landId) => {
+          const view = viewRef.current;
+          if (!view) {
+            dispatch({ type: "select", id: String(landId) });
+            return;
+          }
+          const plan = planMasterboardClick(view, props.viewerSlot, selRef.current, landId);
+          if (plan.command) issueRef.current?.(plan.command);
+          else if (plan.select !== undefined) dispatch({ type: "select", id: plan.select });
+        },
         onLandHover: (landId) => dispatch({ type: "hover", id: landId === null ? null : String(landId) }),
       });
       boardRef.current = board;
@@ -149,9 +158,13 @@ export function useGame(props: GameViewProps): {
 
     board.setVisible(true);
     battle?.setVisible(false);
-    const sel = store.selection.selected ? Number(store.selection.selected) : null;
+    // `selected` is a legion marker on the masterboard; highlight its land.
+    const selMarker = store.selection.selected;
+    const selLand = selMarker && store.snapshot.legions[selMarker]
+      ? store.snapshot.legions[selMarker]!.land
+      : selMarker ? Number(selMarker) : null;
     const hov = store.selection.hovered ? Number(store.selection.hovered) : null;
-    board.render(store.snapshot, Number.isNaN(sel as number) ? null : sel, Number.isNaN(hov as number) ? null : hov);
+    board.render(store.snapshot, selLand != null && Number.isFinite(selLand) ? selLand : null, Number.isNaN(hov as number) ? null : hov);
   }, [store.snapshot, store.selection.selected, store.selection.hovered]);
 
   // --- strict-wait command submission ------------------------------------

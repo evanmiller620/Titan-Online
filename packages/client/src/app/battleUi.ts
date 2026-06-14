@@ -33,6 +33,14 @@ import {
   cubeDistance,
   CREATURE_STATS,
   eligibleRecruits,
+  destinationsForRoll,
+  towerTeleportTargets,
+  titanTeleportTargets,
+  isTower,
+  getLand,
+  MASTER_LANDS,
+  PLAYER_COLORS,
+  LORDS,
   type MasterTerrain,
 } from "@titan/engine";
 import {
@@ -150,19 +158,25 @@ export function availableActions(state: StoreState): ActionButton[] {
   if (!v) return [];
   const path = v.fsm.path;
 
+  if (path.startsWith("Setup")) return setupActions(state, v);
   if (path.includes("Battle.")) return battleActions(state, v);
 
   // Turn-level phases are driven by the masterboard-active player.
   if (!isMyTurn(state)) return [];
 
   if (path.endsWith("Commencement")) {
-    return [{ label: "End splits", type: "EndSplits", primary: true }];
+    const out: ActionButton[] = [];
+    const split = proposeInitialSplit(v, state.viewerSlot);
+    if (split) out.push({ label: "Make initial split (4/4)", type: "SplitLegion", payload: split, primary: true });
+    out.push({ label: "End splits", type: "EndSplits", primary: !split });
+    return out;
   }
   if (path.endsWith("Movement")) {
     const rolled = v.turn.movementRoll != null;
     if (!rolled) return [{ label: "Roll movement", type: "RollMovement", primary: true }];
     const out: ActionButton[] = [{ label: "End movement", type: "EndMovement", primary: true }];
     if (v.turn.number === 1 && !v.turn.mulliganUsed) out.push({ label: "Take mulligan", type: "TakeMulligan" });
+    out.push(...teleportOptions(state, v)); // Tower / Titan teleport for the selected legion
     return out;
   }
   if (path.endsWith("Engagement.Choosing")) {
@@ -178,9 +192,131 @@ export function availableActions(state: StoreState): ActionButton[] {
     ];
   }
   if (path.endsWith("Mustering")) {
-    return [{ label: "End turn", type: "EndTurn", primary: true }];
+    const out = musterOptions(state, v); // recruit for the selected legion
+    out.push({ label: "End turn", type: "EndTurn", primary: out.length === 0 });
+    return out;
   }
   return [];
+}
+
+// --- Setup phase actions ---------------------------------------------------
+
+function setupActions(state: StoreState, v: GameStateView): ActionButton[] {
+  const viewer = state.viewerSlot;
+  if (!viewer) return [];
+  const path = v.fsm.path;
+
+  if (path.endsWith("RollingForOrder")) {
+    return [{ label: "Roll for turn order", type: "RollTurnOrder", primary: true }];
+  }
+  const setup = v.setup;
+  if (!setup) return [];
+
+  if (path.endsWith("TowerSelection")) {
+    if (setup.order[setup.towerPickIndex] !== viewer) return [];
+    const claimed = new Set(Object.values(v.players).map((p) => p.tower).filter((t) => t != null));
+    return MASTER_LANDS.filter((l) => isTower(l.id) && !claimed.has(l.id)).map((l) => ({
+      label: `Choose Tower ${l.id}`, type: "SelectTower", payload: { tower: l.id }, primary: true,
+    }));
+  }
+  if (path.endsWith("ColorSelection")) {
+    if (setup.order[setup.colorPickIndex] !== viewer) return [];
+    const taken = new Set(Object.values(v.players).map((p) => p.color).filter(Boolean));
+    return PLAYER_COLORS.filter((c) => !taken.has(c)).map((c) => ({
+      label: `Take ${c}`, type: "SelectColor", payload: { color: c }, primary: true,
+    }));
+  }
+  return [];
+}
+
+// --- Initial split (the always-required turn-1 4/4) ------------------------
+
+/** Propose a legal 4/4 initial split of the eight-stack: one Lord per half. */
+export function proposeInitialSplit(v: GameStateView, viewer: string | null): Record<string, unknown> | null {
+  if (!viewer || v.turn.number !== 1) return null;
+  const legion = Object.values(v.legions).find(
+    (l) => l.ownerId === viewer && l.height > 7 && !l.splitThisTurn && l.creatures,
+  );
+  if (!legion || !legion.creatures) return null;
+  const marker = v.players[viewer]?.markersAvailable?.[0];
+  if (!marker) return null;
+
+  const creatures = [...legion.creatures];
+  const isLord = (c: string) => c === "Titan" || c === "Angel" || c === "Archangel";
+  // Keep the Titan in the parent; send the other Lord (the Angel) to the child.
+  const childLord = creatures.find((c) => isLord(c) && c !== "Titan");
+  if (!childLord) return null;
+  const nonLords = creatures.filter((c) => !isLord(c));
+  const toNewLegion = [childLord, ...nonLords.slice(0, 3)];
+  return { legionId: legion.marker, newMarker: marker, toNewLegion };
+}
+
+// --- Movement teleports ----------------------------------------------------
+
+function teleportOptions(state: StoreState, v: GameStateView): ActionButton[] {
+  const marker = state.selection.selected;
+  if (!marker) return [];
+  const legion = v.legions[marker];
+  if (!legion || legion.ownerId !== state.viewerSlot || legion.moved) return [];
+  const creatures = legion.creatures ?? [];
+  const out: ActionButton[] = [];
+
+  if (isTower(legion.land) && creatures.some((c) => LORDS.has(c as never))) {
+    const occupied = new Set(Object.values(v.legions).filter((l) => isTower(l.land)).map((l) => l.land));
+    for (const t of towerTeleportTargets(legion.land, occupied)) {
+      out.push({ label: `Tower-teleport to ${t}`, type: "TowerTeleport", payload: { legionId: marker, destination: t } });
+    }
+  }
+  const score = v.players[state.viewerSlot!]?.score ?? 0;
+  if (v.turn.movementRoll === 6 && score >= 400 && creatures.includes("Titan")) {
+    const enemyLands = new Set(Object.values(v.legions).filter((l) => l.ownerId !== state.viewerSlot).map((l) => l.land));
+    for (const t of titanTeleportTargets(enemyLands)) {
+      out.push({ label: `Titan-teleport to ${t}`, type: "TitanTeleport", payload: { legionId: marker, destination: t } });
+    }
+  }
+  return out;
+}
+
+// --- Mustering -------------------------------------------------------------
+
+function musterOptions(state: StoreState, v: GameStateView): ActionButton[] {
+  const marker = state.selection.selected;
+  if (!marker) return [];
+  const legion = v.legions[marker];
+  if (!legion || legion.ownerId !== state.viewerSlot) return [];
+  if (!legion.moved || legion.recruitedThisTurn || legion.height >= 7) return [];
+  const creatures = legion.creatures ?? [];
+  const land = getLand(legion.land);
+  if (!land) return [];
+  const opts = eligibleRecruits(land.terrain, creatures as never, v.caretaker, {
+    containsOwnTitan: creatures.includes("Titan"),
+  });
+  return opts.map((o) => ({ label: `Muster ${o.creature}`, type: "Muster", payload: { legionId: marker, creature: o.creature } }));
+}
+
+// --- Masterboard click: select a legion, then move it ----------------------
+
+export function planMasterboardClick(
+  view: GameStateView,
+  viewer: string | null,
+  selected: string | null,
+  landId: number,
+): ClickPlan {
+  if (viewer === null) return {};
+  const here = Object.values(view.legions).filter((l) => l.land === landId);
+  const mineHere = here.find((l) => l.ownerId === viewer);
+
+  if (view.fsm.path.endsWith("Movement") && view.turn.movementRoll != null) {
+    const sel = selected ? view.legions[selected] : undefined;
+    if (sel && sel.ownerId === viewer && !sel.moved) {
+      const dests = destinationsForRoll(sel.land, view.turn.movementRoll);
+      if (dests.some((d) => d.destination === landId)) {
+        return { command: { type: "MoveLegion", playerId: viewer, payload: { legionId: sel.marker, destination: landId } } };
+      }
+    }
+  }
+  if (mineHere) return { select: mineHere.marker };
+  return {};
 }
 
 function battleActions(state: StoreState, v: GameStateView): ActionButton[] {
