@@ -332,6 +332,7 @@ export class EndTurnCommand extends BaseCommand<Record<string, never>> {
       activeIndex: i,
       movementRoll: null,
       mulliganUsed: false,
+      engagementLand: null,
     };
 
     // Per-turn legion flags reset for everyone.

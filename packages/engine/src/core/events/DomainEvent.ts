@@ -162,6 +162,32 @@ export interface TurnEnded extends EventBase {
   readonly turnNumber: number;
 }
 
+export interface EngagementSelected extends EventBase {
+  readonly type: "EngagementSelected";
+  readonly land: LandId;
+  readonly attackerId: PlayerId;
+}
+
+export interface EngagementResolved extends EventBase {
+  readonly type: "EngagementResolved";
+  readonly land: LandId;
+  readonly outcome: string;
+  readonly winnerId: PlayerId;
+  readonly loserId: PlayerId;
+  readonly pointsAwarded: number;
+  readonly eliminatedMarker: string;
+}
+
+export interface PlayerEliminated extends EventBase {
+  readonly type: "PlayerEliminated";
+  readonly playerId: PlayerId;
+}
+
+export interface GameEnded extends EventBase {
+  readonly type: "GameEnded";
+  readonly winnerId: PlayerId | null;
+}
+
 export type DomainEvent =
   | PhaseChanged
   | TurnOrderRolled
@@ -177,7 +203,11 @@ export type DomainEvent =
   | StrikeResolved
   | CombatantSlain
   | CombatantMoved
-  | TurnEnded;
+  | TurnEnded
+  | EngagementSelected
+  | EngagementResolved
+  | PlayerEliminated
+  | GameEnded;
 
 /** Filter an event stream down to what one player may legally see. */
 export function visibleTo(

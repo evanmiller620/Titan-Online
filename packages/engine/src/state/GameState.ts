@@ -87,6 +87,9 @@ export interface TurnState {
   readonly movementRoll: number | null;
   /** The turn-1 mulligan, once spent. */
   readonly mulliganUsed: boolean;
+  /** The contested Land currently being negotiated, or null when none.
+   *  Set by SelectEngagement, cleared on resolution. */
+  readonly engagementLand?: LandId | null;
 }
 
 /** A single creature counter on the Battleland during a Battle. */
@@ -183,7 +186,7 @@ export function createGame(opts: CreateGameOptions): GameState {
     playerOrder: [], // set when the order roll resolves
     players,
     setup: { order: [], towerPickIndex: 0, colorPickIndex: 0 },
-    turn: { number: 0, activeIndex: 0, movementRoll: null, mulliganUsed: false },
+    turn: { number: 0, activeIndex: 0, movementRoll: null, mulliganUsed: false, engagementLand: null },
     legions: {},
     caretaker,
     battle: null,

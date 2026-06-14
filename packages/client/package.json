@@ -11,7 +11,7 @@
     "typecheck": "tsc -p tsconfig.json",
     "typecheck:offline": "tsc -p tsconfig.offline.json",
     "typecheck:logic": "tsc -p tsconfig.logic.json",
-    "test": "node --experimental-strip-types --test test/*.test.ts"
+    "test": "node --experimental-strip-types --import ./test/engine-alias.register.mjs --test test/*.test.ts"
   },
   "dependencies": {
     "@titan/engine": "workspace:*",

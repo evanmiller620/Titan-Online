@@ -84,6 +84,8 @@ declare module "@supabase/supabase-js" {
     rpc(fn: string, args?: Record<string, unknown>): Promise<{ data: unknown; error: unknown }>;
     auth: {
       getUser(): Promise<{ data: { user: { id: string } | null }; error: unknown }>;
+      getSession(): Promise<{ data: { session: unknown | null }; error: unknown }>;
+      signInAnonymously(): Promise<{ data: unknown; error: { message: string } | null }>;
     };
   }
   export function createClient(url: string, key: string, opts?: Record<string, unknown>): SupabaseClient;

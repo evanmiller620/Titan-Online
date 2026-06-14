@@ -33,6 +33,7 @@ import {
 } from "./movement.ts";
 import { MusterCommand } from "./mustering.ts";
 import { StrikeCommand } from "./battle-strike.ts";
+import { SelectEngagementCommand, ResolveEngagementCommand } from "./engagement.ts";
 
 export class UnknownCommandError extends Error {
   constructor(type: string) {
@@ -78,6 +79,8 @@ register(TowerTeleportCommand.TYPE, TowerTeleportCommand);
 register(TitanTeleportCommand.TYPE, TitanTeleportCommand);
 register(MusterCommand.TYPE, MusterCommand);
 register(StrikeCommand.TYPE, StrikeCommand);
+register(SelectEngagementCommand.TYPE, SelectEngagementCommand);
+register(ResolveEngagementCommand.TYPE, ResolveEngagementCommand);
 
 export const COMMAND_TYPES: readonly string[] = [...REGISTRY.keys()];
 

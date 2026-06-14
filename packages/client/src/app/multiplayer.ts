@@ -28,6 +28,7 @@ import {
   type StoreState,
 } from "../store/gameStore.ts";
 import { MasterboardRenderer } from "../render/MasterboardRenderer.ts";
+import { actionsFor, isViewersMove, terrainOf, type Selection } from "./actions.ts";
 import { palette, tokensCss, type as typ, space } from "../ui/tokens.ts";
 
 // ---------------------------------------------------------------------------
@@ -200,9 +201,11 @@ async function startGame(
   const phaseLine = panel.appendChild(node("div", [`font-size:${typ.scale.sm}`, "margin-bottom:6px"]));
   const rosterLine = panel.appendChild(node("div", [`font-size:${typ.scale.sm}`, `color:${palette.inkSoft}`, "margin-bottom:16px"]));
 
-  const rollBtn = button("Roll turn order", palette.oxblood);
-  rollBtn.style.width = "100%";
-  panel.appendChild(rollBtn);
+  // The command bar (phase-driven buttons) and a contextual help line.
+  const barEl = panel.appendChild(node("div", ["display:flex", "flex-direction:column", "gap:8px", "margin-top:4px"]));
+  const helpLine = panel.appendChild(
+    node("p", [`font-size:${typ.scale.xs}`, `color:${palette.inkSoft}`, "min-height:16px", "margin:10px 0 0", "line-height:1.4"]),
+  );
   const statusLine = panel.appendChild(
     node("p", [`font-size:${typ.scale.sm}`, "min-height:18px", "margin:12px 0 0", "line-height:1.4", `color:${palette.inkSoft}`]),
   );
@@ -210,6 +213,10 @@ async function startGame(
   // --- imperative store + board (the React-free equivalent of useGame) ------
   let store: StoreState = reduce(initialStore, { type: "setViewer", slot });
   let roster: string[] = [];
+  // Two-tap spatial selection for movement / engagement: first tap a legion,
+  // then a destination land. Kept here (not in the store) since it's local UX.
+  let selLegion: string | null = null;
+  let selLand: number | null = null;
 
   const app = new Application();
   await app.init({ background: palette.vellum, antialias: true, resizeTo: boardEl });
@@ -220,7 +227,7 @@ async function startGame(
     app.canvas.height || boardEl.clientHeight || window.innerHeight,
   );
   renderer.attachInput({
-    onLandClick: (landId) => dispatch({ type: "select", id: landId === null ? null : String(landId) }),
+    onLandClick: (landId) => onLandClick(landId),
     onLandHover: (landId) => dispatch({ type: "hover", id: landId === null ? null : String(landId) }),
   });
 
@@ -230,15 +237,48 @@ async function startGame(
     paintBoard();
   };
 
+  /** A board tap: if the land holds one of my legions, select it; otherwise
+   *  treat it as a destination/target land. */
+  function onLandClick(landId: number | null): void {
+    if (landId === null) return;
+    const view = store.snapshot;
+    if (!view) return;
+    const mineHere = Object.values(view.legions).find(
+      (l) => l.ownerId === slot && l.land === landId,
+    );
+    if (mineHere) {
+      selLegion = mineHere.marker;
+      selLand = null;
+    } else {
+      selLand = landId;
+    }
+    dispatch({ type: "select", id: String(landId) });
+  }
+
   function paintBoard(): void {
     if (!store.snapshot) return;
-    const sel = store.selection.selected !== null ? Number(store.selection.selected) : null;
+    const sel = selLand ?? (selLegion ? store.snapshot.legions[selLegion]?.land ?? null : null);
     const hov = store.selection.hovered !== null ? Number(store.selection.hovered) : null;
-    renderer.render(store.snapshot, Number.isNaN(sel) ? null : sel, Number.isNaN(hov) ? null : hov);
+    renderer.render(store.snapshot, sel ?? null, Number.isNaN(hov) ? null : hov);
+  }
+
+  function submit(dto: CommandDTO): void {
+    dispatch({ type: "submitStart", commandType: dto.type });
+    void submitCommand(client, gameId, dto).then((result) => {
+      if (!result.ok) {
+        dispatch({ type: "submitReject", commandType: dto.type, message: result.message });
+      } else {
+        // Clear spatial selection on a successful action; the authoritative
+        // snapshot arrives over Realtime (strict-wait).
+        selLegion = null;
+        selLand = null;
+      }
+    });
   }
 
   function paintPanel(): void {
-    if (!store.snapshot) {
+    const view = store.snapshot;
+    if (!view) {
       phaseLine.textContent = "Waiting for the table…";
     } else {
       const active = activeSlot(store);
@@ -249,10 +289,35 @@ async function startGame(
     rosterLine.textContent =
       roster.length > 0 ? `At the table: ${roster.join(", ")}` : "You're the only one here so far.";
 
-    // The roll is only legal in this exact sub-phase (see RollTurnOrderCommand).
-    const canRoll = store.snapshot?.fsm.path === "Setup.RollingForOrder";
-    rollBtn.style.display = canRoll ? "" : "none";
-    rollBtn.disabled = store.command.kind === "submitting";
+    // Rebuild the command bar from the authoritative view.
+    barEl.replaceChildren();
+    helpLine.textContent = "";
+
+    if (view) {
+      const myMove = isViewersMove(view, slot);
+      if (!myMove) {
+        helpLine.textContent =
+          view.fsm.path === "GameOver" ? "The game is over." : "Waiting for the other player…";
+      } else {
+        const actions = actionsFor(view, slot, { legion: selLegion, land: selLand } as Selection);
+        const submitting = store.command.kind === "submitting";
+        for (const a of actions) {
+          const b = button(a.label, a.primary ? palette.oxblood : palette.verdigris);
+          b.style.width = "100%";
+          b.disabled = submitting;
+          b.onclick = () => submit(a.dto);
+          barEl.appendChild(b);
+        }
+        // Contextual help for the spatial phases.
+        if (view.fsm.path === "Turn.Movement" && view.turn.movementRoll != null) {
+          helpLine.textContent = selLegion
+            ? `Selected ${selLegion} (at land ${view.legions[selLegion]?.land}, terrain ${terrainOf(view.legions[selLegion]?.land ?? 0)}). Tap a destination land.`
+            : "Tap one of your legions, then a destination land.";
+        } else if (actions.length === 0) {
+          helpLine.textContent = "Nothing to do in this phase yet.";
+        }
+      }
+    }
 
     if (store.command.kind === "submitting") {
       statusLine.textContent = "Submitting to the server…";
@@ -264,15 +329,6 @@ async function startGame(
       statusLine.textContent = "";
     }
   }
-
-  rollBtn.onclick = () => {
-    const dto: CommandDTO = { type: "RollTurnOrder", playerId: slot, payload: {} };
-    dispatch({ type: "submitStart", commandType: dto.type });
-    void submitCommand(client, gameId, dto).then((result) => {
-      if (!result.ok) dispatch({ type: "submitReject", commandType: dto.type, message: result.message });
-      // On success the authoritative snapshot arrives over Realtime (strict-wait).
-    });
-  };
 
   // --- realtime + presence --------------------------------------------------
   const subs = subscribeGame(
