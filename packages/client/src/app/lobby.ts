@@ -46,11 +46,25 @@ export async function createTable(
   return String(data);
 }
 
-/** Take the next free seat in a lobby game. Returns the assigned slot. */
+
+/**
+ * Take the next free seat in a lobby game, or RESUME the seat you already hold.
+ * Returns the assigned slot.
+ *
+ * join_game raises "already joined" if this user is already at the table (the
+ * founder, a page reload, or a rejoin). That isn't an error from the player's
+ * point of view — they just want back into their game — so we look up their
+ * existing slot via my_slot() and resume it instead of failing.
+ */
 export async function joinTable(client: SupabaseClient, gameId: string): Promise<string> {
   const { data, error } = await client.rpc("join_game", { p_game_id: gameId });
-  if (error) throw new Error(`could not join: ${describe(error)}`);
-  return String(data);
+  if (!error) return String(data);
+
+  if (/already joined/i.test(describe(error))) {
+    const slot = await mySlot(client, gameId);
+    if (slot) return slot;
+  }
+  throw new Error(`could not join: ${describe(error)}`);
 }
 
 /** List joinable tables for the lobby browser. */
