@@ -121,6 +121,39 @@ export function masterLandToPixel(
   };
 }
 
+/**
+ * The unit-size pixel bounds of a set of hexes (centres only, size = 1). Used to
+ * size a battle board to its ACTUAL extent rather than guessing from the
+ * viewport, so it never overflows or hides under the side panels.
+ */
+export function hexBounds(cubes: readonly CubeCoord[]): { minX: number; minY: number; maxX: number; maxY: number } {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const c of cubes) {
+    const x = 1.5 * c.x;
+    const y = SQRT3 * (c.z + c.x / 2);
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  }
+  return { minX, minY, maxX, maxY };
+}
+
+/**
+ * A HexLayout that fits all `cubes` inside `width`×`height` (minus `margin`) and
+ * centres them. The +2 padding leaves room for the hexes' own radius so corners
+ * aren't clipped. Pure — unit-tested without a canvas.
+ */
+export function fitHexLayout(cubes: readonly CubeCoord[], width: number, height: number, margin: number): HexLayout {
+  const b = hexBounds(cubes);
+  const spanX = (b.maxX - b.minX) || 1;
+  const spanY = (b.maxY - b.minY) || 1;
+  const size = Math.max(1, Math.min((width - 2 * margin) / (spanX + 2), (height - 2 * margin) / (spanY + 2)));
+  const cx = (b.minX + b.maxX) / 2;
+  const cy = (b.minY + b.maxY) / 2;
+  return { size, origin: { x: width / 2 - size * cx, y: height / 2 - size * cy } };
+}
+
 /** Distance between two points (for nearest-land hit testing on the wheel). */
 export function distance(a: Point, b: Point): number {
   const dx = a.x - b.x;

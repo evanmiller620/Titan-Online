@@ -71,6 +71,7 @@ import {
   halfPoints,
   isTimeLoss,
 } from "../../combat/battle.ts";
+import { awardScore } from "./scoring.ts";
 
 // ===========================================================================
 // Shared helpers (pure)
@@ -677,9 +678,10 @@ function eliminatePlayer(
 
   if (heirId) {
     const half = halfPoints(unengagedCreatures, loser.score);
+    awardScore(draft, heirId, half, events);
     const heir = draft.players[heirId]!;
     const allMarkers = [...heir.markersAvailable, ...loser.markersAvailable, ...inheritedMarkers].sort();
-    draft.players[heirId] = { ...heir, score: heir.score + half, markersAvailable: allMarkers };
+    draft.players[heirId] = { ...heir, markersAvailable: allMarkers };
     events.push({
       type: "MarkersInherited", audience: PUBLIC,
       heirId, fromId: loserId, markers: [...loser.markersAvailable, ...inheritedMarkers].sort(),
@@ -762,8 +764,7 @@ function concludeBattle(draft: Draft, events: DomainEvent[], opts: { timeLoss: b
     settleWinnerLegion(draft, winnerLegion, winnerAlive, battle.land);
     delete draft.legions[loserLegion];
 
-    const winner = draft.players[winnerId]!;
-    draft.players[winnerId] = { ...winner, score: winner.score + points };
+    awardScore(draft, winnerId, points, events);
 
     if (loserTitanDead || !ownerHasTitanExcept(draft, loserId, loserLegion)) {
       eliminatePlayer(draft, events, loserId, winnerId, end);

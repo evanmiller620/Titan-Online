@@ -1,20 +1,19 @@
 /**
  * Network layer (Titan client, net).
  *
- * The ONLY module that talks to Supabase. It keeps three channels strictly
- * separated (mirroring supabase/functions/_shared/REALTIME.md):
+ * The ONLY module that talks to Supabase. In the client-authoritative model
+ * the server is a RELAY + STORE, not a referee:
  *
- *   - Authoritative state via Postgres-Changes on `games`: the new
- *     public_state is dispatched into the store as a versioned snapshot. This
- *     is the single source of truth the UI renders.
- *   - Presence on `game:{id}:presence`: lobby roster & disconnects.
- *   - Broadcast on `game:{id}:ui`: ephemeral hover / targeting, never persisted.
+ *   - appendCommand(): hands a command to the relay function, which assigns the
+ *     next sequence number and stores it in the append-only command_log.
+ *   - subscribeCommands(): the ordered command stream (own + peers') via
+ *     Postgres-Changes on command_log — every client replays it locally.
+ *   - loadCommandLog(): the persisted log + shared seed to rebuild state on
+ *     reconnect (a game survives days away).
+ *   - Presence on `game:{id}:presence`: the waiting-room roster.
  *
- * Command submission is STRICT-WAIT (project decision): submitCommand() posts
- * to the submit-command Edge Function and resolves with accept/reject, but it
- * does NOT apply anything locally — the store updates only when the
- * authoritative Postgres-Changes frame arrives. The UI shows "submitting…"
- * between the two, and a rejection surfaces the engine's structured failure.
+ * No state is computed here and no rules are checked; the engine lives on each
+ * client (game/engine.ts) and stays in sync via the shared seed + ordering.
  */
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
@@ -29,35 +28,64 @@ export function makeClient(cfg: NetConfig): SupabaseClient {
   return createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
 }
 
-export type SubmitResult =
-  | { readonly ok: true; readonly version: number }
-  | { readonly ok: false; readonly code: string; readonly message: string };
-
 /**
- * Submit a command and wait for the server's accept/reject. Does NOT mutate
- * the store directly; the caller dispatches submitStart before and the
- * authoritative snapshot arrives over Realtime. On reject the caller
- * dispatches submitReject with the returned message.
+ * Append a command to the shared, ordered log via the relay function. The
+ * server does NO rule checking — it only assigns the next sequence number,
+ * stores the command (persistence), and lets Realtime broadcast it. Every
+ * client validates + executes locally and deterministically.
  */
-export async function submitCommand(
+export async function appendCommand(
   client: SupabaseClient,
   gameId: string,
   command: CommandDTO,
-): Promise<SubmitResult> {
-  const { data, error } = await client.functions.invoke("submit-command", {
-    body: { gameId, command },
-  });
+): Promise<{ ok: boolean; seq?: number; message?: string }> {
+  const { data, error } = await client.functions.invoke("submit-command", { body: { gameId, command } });
   if (error) {
-    const message =
-      typeof error === "object" && error && "message" in error
-        ? String((error as { message: unknown }).message)
-        : "command failed";
-    // Edge Function returns 422 with a structured failure for illegal moves.
-    const failure = (data as { failure?: { code?: string } } | null)?.failure;
-    return { ok: false, code: failure?.code ?? "ERROR", message };
+    const message = typeof error === "object" && error && "message" in error ? String((error as { message: unknown }).message) : "relay failed";
+    return { ok: false, message };
   }
-  const version = (data as { version?: number } | null)?.version ?? 0;
-  return { ok: true, version };
+  return { ok: true, seq: (data as { seq?: number } | null)?.seq };
+}
+
+/** Subscribe to the ordered command stream (own + peers'), in insert order. */
+export function subscribeCommands(
+  client: SupabaseClient,
+  gameId: string,
+  onCommand: (command: CommandDTO, seq: number) => void,
+): () => void {
+  const ch = client
+    .channel(`game:${gameId}:log`)
+    .on(
+      "postgres_changes",
+      { event: "INSERT", schema: "public", table: "command_log", filter: `game_id=eq.${gameId}` },
+      (payload: unknown) => {
+        const row = (payload as { new?: { command?: CommandDTO; seq?: number } }).new;
+        if (row?.command && typeof row.seq === "number") onCommand(row.command, row.seq);
+      },
+    )
+    .subscribe();
+  return () => { void ch.unsubscribe(); };
+}
+
+/** Rebuild the inputs to replay a game: the shared seed (derived from the game
+ *  id so every client agrees), seat count, and the ordered command log. */
+export async function loadCommandLog(
+  client: SupabaseClient,
+  gameId: string,
+): Promise<{ seed: number; seats: number; gameId: string; log: CommandDTO[] }> {
+  const { data: game } = await client.from("games").select("public_state").eq("id", gameId).single();
+  const players = (game as { public_state?: { players?: Record<string, unknown> } } | null)?.public_state?.players;
+  const seats = players ? Object.keys(players).length : 2;
+  const { data: rows } = await client.from("command_log").select("command, seq").eq("game_id", gameId).order("seq", { ascending: true });
+  const log = ((rows as Array<{ command: CommandDTO }> | null) ?? []).map((r) => r.command);
+  return { seed: seedFromGameId(gameId), seats, gameId, log };
+}
+
+/** A stable 32-bit seed derived from the game id (FNV-1a) — shared by all. */
+export function seedFromGameId(id: string): number {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < id.length; i++) { h ^= id.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h >>> 0;
 }
 
 /**

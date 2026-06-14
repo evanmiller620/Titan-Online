@@ -239,6 +239,15 @@ export interface MarkersInherited extends EventBase {
   readonly markers: readonly LegionId[];
 }
 
+/** A player crossed a scoring threshold and gained an Angel/Archangel, added to
+ *  one of their legions (§7.5 acquisition). */
+export interface CreatureAcquired extends EventBase {
+  readonly type: "CreatureAcquired";
+  readonly playerId: PlayerId;
+  readonly creature: CreatureName;
+  readonly legionId: LegionId;
+}
+
 export interface PlayerEliminated extends EventBase {
   readonly type: "PlayerEliminated";
   readonly playerId: PlayerId;
@@ -274,6 +283,7 @@ export type DomainEvent =
   | BattleReinforced
   | BattleConcluded
   | MarkersInherited
+  | CreatureAcquired
   | PlayerEliminated
   | GameEnded;
 

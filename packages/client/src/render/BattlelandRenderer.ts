@@ -17,7 +17,7 @@ import {
   type GameStateView,
   type CubeCoord,
 } from "@titan/engine";
-import { cubeToPixelFlat, hexCornersFlat, type HexLayout, type Point } from "./projection.ts";
+import { cubeToPixelFlat, hexCornersFlat, fitHexLayout, type HexLayout, type Point } from "./projection.ts";
 import { palette, terrainColor } from "../ui/tokens.ts";
 
 const hex = (s: string) => parseInt(s.replace("#", ""), 16);
@@ -49,11 +49,10 @@ export interface BattlelandCallbacks {
 export class BattlelandRenderer {
   private readonly app: Application;
   private readonly layer = new Container();
-  private readonly layout: HexLayout;
+  private layout: HexLayout;
 
   constructor(app: Application, width: number, height: number) {
     this.app = app;
-    // Centre the board; size chosen so the 6-wide board fits the viewport.
     this.layout = { size: Math.min(width, height) / 9, origin: { x: width / 2, y: height / 2 } };
     this.app.stage.addChild(this.layer);
   }
@@ -65,6 +64,13 @@ export class BattlelandRenderer {
     if (!battle) return;
     const map = BATTLE_MAPS[battle.terrain];
     if (!map) return;
+
+    // Size the board to its ACTUAL hex extent within the live canvas, centred —
+    // so it fills the board area without overflowing or hiding under a panel.
+    const r = this.app.renderer as { width?: number; height?: number } | undefined;
+    const w = r?.width || this.app.screen?.width || 800;
+    const h = r?.height || this.app.screen?.height || 600;
+    this.layout = fitHexLayout(map.hexes.map((hx) => hx.cube), w, h, Math.min(w, h) * 0.06);
 
     // Hexes.
     for (const h of map.hexes) {

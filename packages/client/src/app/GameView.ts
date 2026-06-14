@@ -14,8 +14,9 @@ import { BattlelandRenderer } from "../render/BattlelandRenderer.ts";
 import { Inspector } from "../ui/Inspector.ts";
 import { GameSession } from "../game/session.ts";
 import { planMasterboardClick, planBattleClick, seatActsNow, battleBanner } from "../game/legalActions.ts";
-import { elem, txt, eyebrow, chip, button, theme } from "../ui/dom.ts";
+import { elem, txt, eyebrow, chip, button, input, theme } from "../ui/dom.ts";
 import { type as typ } from "../ui/tokens.ts";
+import type { DomainEvent } from "@titan/engine";
 
 export class GameView {
   private readonly session: GameSession;
@@ -29,6 +30,8 @@ export class GameView {
   private bar!: HTMLElement;
   private status!: HTMLElement;
   private logEl!: HTMLElement;
+  private devEl!: HTMLElement;
+  private readonly forceField = input("dice e.g. 6,6,1");
 
   constructor(session: GameSession, opts: { autoFollow: boolean }) {
     this.session = session;
@@ -46,9 +49,14 @@ export class GameView {
     this.seatRow = elem("div", "display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px");
     this.bar = elem("div", "display:flex;flex-direction:column;gap:8px");
     this.status = elem("div", `margin-top:12px;min-height:18px;font-size:${typ.scale.sm};line-height:1.4`);
-    this.logEl = elem("div", `margin-top:6px;font-family:${typ.mono};font-size:11px;line-height:1.5;color:${theme.dim}`);
-    const control = elem("aside", `width:300px;flex:0 0 300px;height:100%;overflow:auto;padding:16px;background:${theme.bg};border-left:1px solid ${theme.brass};color:${theme.ink}`, {
-      children: [this.seatRow, this.bar, this.status, elem("div", "margin-top:16px", { children: [eyebrow("Event log")] }), this.logEl],
+    this.devEl = elem("div", "display:flex;flex-direction:column;gap:6px;margin-top:6px");
+    this.logEl = elem("div", `margin-top:6px;font-family:${typ.mono};font-size:11px;line-height:1.5;color:${theme.dim};white-space:pre-wrap`);
+    const control = elem("aside", `width:320px;flex:0 0 320px;height:100%;overflow:auto;padding:16px;background:${theme.bg};border-left:1px solid ${theme.brass};color:${theme.ink}`, {
+      children: [
+        this.seatRow, this.bar, this.status,
+        elem("div", "margin-top:16px", { children: [eyebrow("Developer")] }), this.devEl,
+        elem("div", "margin-top:16px", { children: [eyebrow("Event log (verbose)")] }), this.logEl,
+      ],
     });
     root.appendChild(control);
 
@@ -95,12 +103,44 @@ export class GameView {
       this.status.style.color = theme.warn;
     } else {
       this.status.textContent = "";
-      const evs = this.session.lastEvents().map((e) => e.type).filter((t) => t !== "PhaseChanged");
-      this.log.unshift(`${dto.playerId} ${dto.type}${evs.length ? " → " + evs.join(", ") : ""}`);
-      if (this.log.length > 40) this.log.pop();
+      const ev = this.session.lastEvents().map(formatEvent);
+      const block = `▸ ${dto.playerId} · ${dto.type}` + (ev.length ? "\n" + ev.map((l) => "    " + l).join("\n") : "");
+      this.log.unshift(block);
+      if (this.log.length > 60) this.log.pop();
       if (this.autoFollow) this.session.focusActiveSeat();
     }
     this.render();
+  }
+
+  private renderDev(): void {
+    const dev = this.session.dev();
+    if (!dev) {
+      this.devEl.replaceChildren(txt("Networked game — rules run on each client; dev tools are local-table only.", theme.dim, "11px"));
+      return;
+    }
+    const copy = (label: string, get: () => unknown) =>
+      button(label, { full: true, onClick: () => { try { void navigator.clipboard?.writeText(JSON.stringify(get(), null, 2)); } catch { /* no-op */ } } });
+    const forceRow = elem("div", "display:flex;gap:6px", {
+      children: [
+        elem("div", "flex:1", { children: [this.forceField] }),
+        button("Force dice", { onClick: () => { const f = this.forceField.value.split(",").map((n) => Number(n.trim())).filter((n) => n >= 1 && n <= 6); if (f.length) dev.forceRolls(f); } }),
+      ],
+    });
+    this.forceField.style.margin = "0";
+    const saveRow = elem("div", "display:flex;gap:6px", {
+      children: [
+        button("Save", { onClick: () => { dev.save(); this.status.textContent = "saved to slot 'quick'"; this.status.style.color = theme.good; } }),
+        button("Load", { onClick: () => { if (dev.load()) { this.status.textContent = "loaded slot 'quick'"; this.status.style.color = theme.good; } else { this.status.textContent = "no save found"; this.status.style.color = theme.warn; } } }),
+      ],
+    });
+    this.devEl.replaceChildren(
+      button(`Reveal all: ${this.session.isRevealAll() ? "ON" : "off"}`, { full: true, primary: this.session.isRevealAll(), onClick: () => this.session.setRevealAll(!this.session.isRevealAll()) }),
+      saveRow,
+      button("Undo last command", { full: true, onClick: () => dev.undo() }),
+      forceRow,
+      copy("Copy state JSON", () => this.session.view()),
+      copy("Copy command log", () => dev.snapshot().log),
+    );
   }
 
   private render(): void {
@@ -108,6 +148,7 @@ export class GameView {
     this.inspector.update(v);
     this.renderSeats(v);
     this.renderBar();
+    this.renderDev();
     this.renderBoard(v);
     this.logEl.replaceChildren(...this.log.map((line) => elem("div", "padding:1px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis", { text: line })));
   }
@@ -151,5 +192,30 @@ export class GameView {
       const land = legion && v.legions[legion] ? v.legions[legion]!.land : null;
       this.board.render(v, land, null);
     }
+  }
+}
+
+/** One detailed line per domain event, for the verbose log. */
+function formatEvent(e: DomainEvent): string {
+  const a = e as unknown as Record<string, unknown>;
+  switch (e.type) {
+    case "PhaseChanged": return `phase ${a.from} → ${a.to}`;
+    case "TurnOrderRolled": return `order ${(a.order as string[]).join(",")}`;
+    case "MovementRolled": return `roll d6=${a.roll}${a.mulligan ? " (mulligan)" : ""}`;
+    case "LegionMoved": return `${a.legionId} ${a.from}→${a.to}${a.teleport ? " (teleport)" : ""}`;
+    case "LegionSplit": return `split ${a.parentLegionId}(${a.parentHeight}) / ${a.childLegionId}(${a.childHeight})`;
+    case "CreatureRecruited": return `recruit @${a.land} → height ${a.newHeight}`;
+    case "BattleJoined": return `battle @${a.land} (${a.terrain}) ${a.attackerLegion} vs ${a.defenderLegion}`;
+    case "BattlePhaseAdvanced": return `battle r${a.round} ${a.activeSide} ${a.phase}`;
+    case "StrikeResolved": return `strike ${a.strikerId}→${a.targetId}: ${a.dice}d need ${a.strikeNumber} rolled [${(a.rolls as number[]).join(",")}] = ${a.hits} hit${a.carriedTo ? ` carry→${a.carriedTo}` : ""}`;
+    case "CombatantSlain": return `SLAIN ${a.creature} (${a.side} ${a.combatantId})`;
+    case "AngelSummoned": return `summon ${a.creature} from ${a.fromLegion}`;
+    case "BattleReinforced": return `reinforce ${a.creature}`;
+    case "BattleConcluded": return `battle ${a.outcome} winner=${a.winnerId ?? "—"} +${a.pointsAwarded}${a.timeLoss ? " TIME-LOSS" : ""}`;
+    case "MarkersInherited": return `${a.heirId} inherits ${(a.markers as string[]).length} markers from ${a.fromId}`;
+    case "PlayerEliminated": return `ELIMINATED ${a.playerId}`;
+    case "GameEnded": return `GAME OVER winner=${a.winnerId ?? "—"}`;
+    case "EngagementResolved": return `engagement @${a.land} ${a.outcome} +${a.pointsAwarded}`;
+    default: return e.type;
   }
 }

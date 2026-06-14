@@ -1,89 +1,70 @@
 /**
- * Transport (Titan client, game) — the seam that decouples the UI from WHERE
- * the game authority lives.
+ * Transport (Titan client, game) — the seam between the UI and the network.
  *
- * First principle: a game is a stream of commands applied to authoritative
- * state. A Transport owns that authority and the redaction boundary:
- *
- *   - LocalTransport runs the pure engine IN THE BROWSER. Commands validate +
- *     execute immediately; every seat is driven from this machine (hot-seat /
- *     debugging). No backend required, so it always works.
- *   - RemoteTransport defers to the Supabase server: submit() posts to the edge
- *     function and the authoritative snapshot returns over Realtime (strict-
- *     wait). The same UI drives it unchanged.
- *
- * The UI asks the transport for `viewFor(seat)` and calls `submit(dto)`; it
- * never knows or cares which transport it holds.
+ * Both transports run the SAME client-authoritative GameEngine. The difference
+ * is only how commands travel:
+ *   - LocalTransport: hot-seat, no network. Apply immediately. Dev-capable.
+ *   - RelayTransport: the server is a dumb relay + store (no rule checking). A
+ *     command is broadcast; every client applies it in sequence order to its
+ *     own engine. Determinism (shared seed + ordered log) keeps peers identical,
+ *     and the persisted log restores state on reconnect.
  */
 
-import {
-  createGame,
-  deserializeCommand,
-  viewFor,
-  fromMathRandom,
-  type GameState,
-  type GameStateView,
-  type CommandDTO,
-  type DomainEvent,
-} from "@titan/engine";
+import type { GameStateView, CommandDTO, DomainEvent } from "@titan/engine";
+import { GameEngine, type EngineSnapshot } from "./engine.ts";
 
-export type SubmitResult =
-  | { readonly ok: true }
-  | { readonly ok: false; readonly code: string; readonly message: string };
+export type SubmitResult = { readonly ok: true } | { readonly ok: false; readonly code: string; readonly message: string };
+
+/** Optional developer controls a transport may expose (local authority only). */
+export interface DevControls {
+  undo(): void;
+  setSeed(seed: number): void;
+  forceRolls(faces: number[]): void;
+  revealedView(): GameStateView;
+  snapshot(): EngineSnapshot;
+  /** Persist / restore the whole game to a localStorage slot for quick debugging. */
+  save(slot?: string): void;
+  load(slot?: string): boolean;
+}
+
+const SAVE_PREFIX = "titan.save.";
 
 export interface Transport {
-  readonly mode: "local" | "remote";
-  /** The redacted view for a seat (null = public/spectator). */
+  readonly mode: "local" | "relay";
   viewFor(seat: string | null): GameStateView | null;
-  /** Issue a command. Resolves accept/reject; never throws on a rule violation. */
   submit(dto: CommandDTO): Promise<SubmitResult>;
-  /** Subscribe to authoritative state changes. Returns an unsubscribe fn. */
   onChange(cb: () => void): () => void;
-  /** Domain events from the most recent accepted command (for the event log). */
   readonly lastEvents: readonly DomainEvent[];
+  /** Present when this client owns the rules (always, now) and may debug. */
+  readonly dev?: DevControls;
 }
 
 // ---------------------------------------------------------------------------
-// Local: the engine runs here. Authoritative, synchronous, no backend.
+// Local: engine in the browser, apply immediately.
 // ---------------------------------------------------------------------------
 
 export class LocalTransport implements Transport {
   readonly mode = "local" as const;
-  private state: GameState;
-  private listeners = new Set<() => void>();
   lastEvents: readonly DomainEvent[] = [];
+  private engine: GameEngine;
+  private readonly listeners = new Set<() => void>();
 
-  constructor(initial: GameState) {
-    this.state = initial;
+  constructor(engine: GameEngine) {
+    this.engine = engine;
   }
 
-  /** Build a fresh local game with N seats (p1..pN). */
-  static newGame(seats: number, gameId = "local"): LocalTransport {
-    const players = Array.from({ length: seats }, (_, i) => ({ id: `p${i + 1}`, name: `Player ${i + 1}` }));
-    return new LocalTransport(createGame({ gameId, players }));
-  }
-
-  /** Direct read of the unredacted state (debug/inspection only). */
-  rawState(): GameState {
-    return this.state;
+  static newGame(seats: number, seed = Date.now() >>> 0): LocalTransport {
+    return new LocalTransport(GameEngine.fresh(seats, seed));
   }
 
   viewFor(seat: string | null): GameStateView {
-    return viewFor(this.state, seat);
+    return this.engine.view(seat);
   }
 
   submit(dto: CommandDTO): Promise<SubmitResult> {
-    let cmd;
-    try {
-      cmd = deserializeCommand(dto);
-    } catch (e) {
-      return Promise.resolve({ ok: false, code: "MALFORMED", message: msg(e) });
-    }
-    const v = cmd.validate(this.state);
-    if (!v.ok) return Promise.resolve({ ok: false, code: v.failure.code, message: v.failure.message });
-    const { state, events } = cmd.execute(this.state, fromMathRandom());
-    this.state = state;
-    this.lastEvents = events;
+    const r = this.engine.apply(dto);
+    if (!r.ok) return Promise.resolve({ ok: false, code: r.code, message: r.message });
+    this.lastEvents = r.events;
     this.emit();
     return Promise.resolve({ ok: true });
   }
@@ -93,70 +74,105 @@ export class LocalTransport implements Transport {
     return () => this.listeners.delete(cb);
   }
 
-  private emit(): void {
-    for (const cb of this.listeners) cb();
-  }
+  readonly dev: DevControls = {
+    undo: () => { this.engine.undo(); this.lastEvents = []; this.emit(); },
+    setSeed: (seed) => this.engine.setSeed(seed),
+    forceRolls: (faces) => this.engine.forceRolls(faces),
+    revealedView: () => this.engine.view(null, true),
+    snapshot: () => this.engine.snapshot(),
+    save: (slot = "quick") => { try { localStorage.setItem(SAVE_PREFIX + slot, this.engine.serialize()); } catch { /* unavailable */ } },
+    load: (slot = "quick") => {
+      let text: string | null = null;
+      try { text = localStorage.getItem(SAVE_PREFIX + slot); } catch { /* unavailable */ }
+      if (!text) return false;
+      this.engine = GameEngine.deserialize(text);
+      this.lastEvents = [];
+      this.emit();
+      return true;
+    },
+  };
+
+  private emit(): void { for (const cb of this.listeners) cb(); }
 }
 
 // ---------------------------------------------------------------------------
-// Remote: the Supabase server is authoritative (strict-wait).
+// Relay: the server only broadcasts + stores commands. Each client executes.
 // ---------------------------------------------------------------------------
 
-export interface RemoteDeps {
-  submitCommand(gameId: string, dto: CommandDTO): Promise<SubmitResult>;
-  /** Subscribe to authoritative snapshots; returns unsubscribe. */
-  subscribe(onSnapshot: (view: GameStateView, version: number) => void): () => void;
-  /** One-shot initial snapshot (join / reconnect). */
-  fetchSnapshot(): Promise<{ view: GameStateView; version: number } | null>;
+export interface RelayDeps {
+  /** Append a command to the shared, ordered log (server assigns the seq). */
+  send(dto: CommandDTO): Promise<{ ok: boolean; message?: string }>;
+  /** Receive every command in sequence order (own + peers'). */
+  subscribe(onCommand: (dto: CommandDTO, seq: number) => void): () => void;
+  /** Load the persisted log + seed to rebuild state on (re)connect. */
+  load(): Promise<EngineSnapshot>;
 }
 
-export class RemoteTransport implements Transport {
-  readonly mode = "remote" as const;
-  private view: GameStateView | null = null;
-  private version = -1;
-  private listeners = new Set<() => void>();
+export class RelayTransport implements Transport {
+  readonly mode = "relay" as const;
+  lastEvents: readonly DomainEvent[] = [];
+  private engine: GameEngine | null = null;
+  private readonly deps: RelayDeps;
+  private readonly listeners = new Set<() => void>();
   private unsub: (() => void) | null = null;
-  lastEvents: readonly DomainEvent[] = []; // server doesn't stream events to the UI here
-  private readonly gameId: string;
-  private readonly deps: RemoteDeps;
+  private nextSeq = 0;
+  private readonly pending = new Map<number, CommandDTO>(); // buffer out-of-order
 
-  constructor(gameId: string, deps: RemoteDeps) {
-    this.gameId = gameId;
+  constructor(deps: RelayDeps) {
     this.deps = deps;
   }
 
   async start(): Promise<void> {
-    this.unsub = this.deps.subscribe((view, version) => this.adopt(view, version));
-    const snap = await this.deps.fetchSnapshot();
-    if (snap) this.adopt(snap.view, snap.version);
+    // Subscribe FIRST (buffering inbound), then load the persisted log, so a
+    // command inserted during the load isn't missed. command_log.seq is
+    // 1-based and equals the post-apply sequence number.
+    this.unsub = this.deps.subscribe((dto, seq) => this.ingest(dto, seq));
+    const snap = await this.deps.load();
+    this.engine = GameEngine.restore(snap);
+    this.nextSeq = this.engine.sequence + 1;
+    this.drain();
+    this.emit();
   }
 
-  stop(): void {
-    this.unsub?.();
-    this.unsub = null;
+  stop(): void { this.unsub?.(); this.unsub = null; }
+
+  private ingest(dto: CommandDTO, seq: number): void {
+    if (this.engine && seq < this.nextSeq) return; // already applied
+    this.pending.set(seq, dto);
+    this.drain();
+    this.emit();
   }
 
-  private adopt(view: GameStateView, version: number): void {
-    if (version <= this.version) return; // ignore stale / duplicate frames
-    this.view = view;
-    this.version = version;
-    for (const cb of this.listeners) cb();
+  /** Apply buffered commands strictly in sequence so every client matches. */
+  private drain(): void {
+    if (!this.engine) return;
+    while (this.pending.has(this.nextSeq)) {
+      const next = this.pending.get(this.nextSeq)!;
+      this.pending.delete(this.nextSeq);
+      const r = this.engine.apply(next);
+      if (r.ok) this.lastEvents = r.events;
+      this.nextSeq++;
+    }
   }
 
-  viewFor(_seat: string | null): GameStateView | null {
-    return this.view; // server already redacted to this client's seat
+  viewFor(seat: string | null): GameStateView | null {
+    return this.engine ? this.engine.view(seat) : null;
   }
 
-  submit(dto: CommandDTO): Promise<SubmitResult> {
-    return this.deps.submitCommand(this.gameId, dto);
+  async submit(dto: CommandDTO): Promise<SubmitResult> {
+    // Validate locally for instant feedback; the authoritative apply happens
+    // when the command echoes back in order (keeps every peer in lockstep).
+    const probe = GameEngine.restore(this.engine!.snapshot());
+    const local = probe.apply(dto);
+    if (!local.ok) return { ok: false, code: local.code, message: local.message };
+    const r = await this.deps.send(dto);
+    return r.ok ? { ok: true } : { ok: false, code: "RELAY", message: r.message ?? "relay failed" };
   }
 
   onChange(cb: () => void): () => void {
     this.listeners.add(cb);
     return () => this.listeners.delete(cb);
   }
-}
 
-function msg(e: unknown): string {
-  return e instanceof Error ? e.message : "error";
+  private emit(): void { for (const cb of this.listeners) cb(); }
 }

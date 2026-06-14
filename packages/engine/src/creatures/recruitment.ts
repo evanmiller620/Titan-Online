@@ -147,16 +147,24 @@ export function canRecruit(
   );
 }
 
+/** Score interval that grants an Angel (Avalon Hill: every multiple of 100). */
+export const ANGEL_INTERVAL = 100;
+/** Multiples of this grant an Archangel INSTEAD of an Angel (every 500). */
+export const ARCHANGEL_INTERVAL = 500;
+
 /**
- * Acquirable lords (Angels/Archangels) a player crossing from `oldScore` to
- * `newScore` becomes entitled to. Returns the creatures earned by threshold
- * crossings, each as one entry. (How many Angels per 100 vs the single
- * Archangel-at-500 is resolved by module 7's scoring; this is the data hook.)
+ * Acquirable Lords a player earns by raising their score from `oldScore` to
+ * `newScore` (Law of Titan §7.5, per the Avalon Hill rules): one Angel for EACH
+ * multiple of 100 the score passes, and an Archangel INSTEAD of an Angel at each
+ * multiple of 500. One entry per multiple crossed, in ascending order. The
+ * "fall back to an Angel if no Archangel is left" rule is applied at placement
+ * time (scoring.ts), where the caretaker pool is known.
  */
 export function acquirablesCrossed(oldScore: number, newScore: number): CreatureName[] {
   const earned: CreatureName[] = [];
-  for (const a of ACQUIRABLES) {
-    if (oldScore < a.points && newScore >= a.points) earned.push(a.creature);
+  const first = Math.floor(oldScore / ANGEL_INTERVAL) * ANGEL_INTERVAL + ANGEL_INTERVAL;
+  for (let m = first; m <= newScore; m += ANGEL_INTERVAL) {
+    earned.push(m % ARCHANGEL_INTERVAL === 0 ? "Archangel" : "Angel");
   }
   return earned;
 }

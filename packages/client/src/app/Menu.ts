@@ -12,10 +12,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CommandDTO, GameStateView } from "@titan/engine";
 import { SeatRoster } from "../game/seatRoster.ts";
 import { GameSession } from "../game/session.ts";
-import { LocalTransport, RemoteTransport, type RemoteDeps } from "../game/transport.ts";
+import { LocalTransport, RelayTransport, type RelayDeps } from "../game/transport.ts";
 import { GameView } from "./GameView.ts";
 import { createTable, joinTable } from "./lobby.ts";
-import { submitCommand, subscribeGame, fetchSnapshot, type Subscriptions } from "../net/supabase.ts";
+import { subscribeGame, fetchSnapshot, appendCommand, subscribeCommands, loadCommandLog, type Subscriptions } from "../net/supabase.ts";
 import { elem, txt, eyebrow, button, chip, input, theme } from "../ui/dom.ts";
 import { palette, type as typ } from "../ui/tokens.ts";
 
@@ -194,25 +194,19 @@ export class Menu {
       new GameView(session, { autoFollow: true }).mount(this.root);
       return;
     }
-    // online
+    // online — the server only relays + stores commands; we run the engine.
     const gameId = this.gameId!;
     this.presence?.unsubscribe();
     this.presence = null;
-    const deps: RemoteDeps = {
-      submitCommand: async (gid: string, dto: CommandDTO) => {
-        const r = await submitCommand(this.client!, gid, dto);
-        return r.ok ? { ok: true } : { ok: false, code: r.code, message: r.message };
+    const deps: RelayDeps = {
+      send: async (dto: CommandDTO) => {
+        const r = await appendCommand(this.client!, gameId, dto);
+        return { ok: r.ok, message: r.message };
       },
-      subscribe: (onSnapshot: (v: GameStateView, version: number) => void) => {
-        const subs = subscribeGame(this.client!, gameId, onSnapshot, () => {}, () => {});
-        return () => subs.unsubscribe();
-      },
-      fetchSnapshot: async () => {
-        const snap = await fetchSnapshot(this.client!, gameId);
-        return snap ? { view: snap.view, version: snap.version } : null;
-      },
+      subscribe: (onCommand) => subscribeCommands(this.client!, gameId, onCommand),
+      load: () => loadCommandLog(this.client!, gameId),
     };
-    const transport = new RemoteTransport(gameId, deps);
+    const transport = new RelayTransport(deps);
     await transport.start();
     const session = new GameSession(transport, this.roster.toSeats(), this.mySlot!);
     new GameView(session, { autoFollow: false }).mount(this.root);

@@ -67,12 +67,6 @@ export const space = {
   xl: "40px",
 } as const;
 
-export const radius = {
-  none: "0px",
-  sm: "3px",
-  seal: "50%",
-} as const;
-
 /** Emit the tokens as a :root CSS custom-property block (injected once). */
 export function tokensCss(): string {
   const vars: string[] = [];

@@ -51,6 +51,7 @@ import type { Rng } from "../rng/Rng.ts";
 import { legionsAt, pendingEngagements } from "../../state/selectors.ts";
 import { pointValue } from "../../creatures/stats.data.ts";
 import { createBattleContext } from "./battle-flow.ts";
+import { awardScore } from "./scoring.ts";
 
 /** Engagement outcomes: flee/concede resolve administratively; fight opens the
  *  tactical Battle subtree (battle-flow.ts drives it to conclusion). */
@@ -168,9 +169,8 @@ export class ResolveEngagementCommand extends BaseCommand<ResolveEngagementPaylo
       markersAvailable: [...loserPlayer.markersAvailable, losing.marker].sort(),
     };
 
-    // Score the winner.
-    const winner = draft.players[winningId]!;
-    draft.players[winningId] = { ...winner, score: winner.score + points };
+    // Score the winner (and grant any Angel/Archangel the new total crosses).
+    awardScore(draft, winningId, points, events);
 
     // Reveal is moot now (legion gone); emit the public outcome.
     events.push({

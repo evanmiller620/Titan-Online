@@ -8,9 +8,12 @@ import {
   masterLandToPixel,
   nearestLand,
   distance,
+  hexBounds,
+  fitHexLayout,
   type HexLayout,
   type BoardExtent,
 } from "../src/render/projection.ts";
+import { BATTLE_MAPS } from "@titan/engine";
 
 const cube = (x: number, y: number, z: number) => ({ x, y, z });
 
@@ -51,6 +54,44 @@ describe("flat-top cube↔pixel projection", () => {
     const b = cubeToPixelFlat(cube(1, -1, 0), layout);
     const d = distance(a, b);
     assert.ok(d > layout.size && d < 2 * layout.size, `neighbour spacing ${d}`);
+  });
+});
+
+describe("fit-to-bounds battle layout", () => {
+  const cubes = (BATTLE_MAPS.Plains as { hexes: Array<{ cube: { x: number; y: number; z: number } }> }).hexes.map((h) => h.cube);
+
+  it("hexBounds spans the column/row extent", () => {
+    const b = hexBounds([cube(0, 0, 0), cube(2, -2, 0)]);
+    assert.equal(b.minX, 0);
+    assert.equal(b.maxX, 3); // 1.5 * 2
+  });
+
+  it("keeps every hex centre inside the canvas, for any viewport", () => {
+    for (const [w, h] of [[600, 400], [1200, 900], [400, 800]] as const) {
+      const margin = Math.min(w, h) * 0.06;
+      const layout = fitHexLayout(cubes, w, h, margin);
+      for (const c of cubes) {
+        const p = cubeToPixelFlat(c, layout);
+        assert.ok(p.x >= 0 && p.x <= w, `x ${p.x} in ${w}`);
+        assert.ok(p.y >= 0 && p.y <= h, `y ${p.y} in ${h}`);
+      }
+    }
+  });
+
+  it("scales the board up with the viewport (bigger board on a bigger screen)", () => {
+    const small = fitHexLayout(cubes, 600, 450, 24).size;
+    const big = fitHexLayout(cubes, 1200, 900, 24).size;
+    assert.ok(big > small, `expected ${big} > ${small}`);
+  });
+
+  it("centres the board: the hex centroid lands near the canvas centre", () => {
+    const w = 800, h = 600;
+    const layout = fitHexLayout(cubes, w, h, 24);
+    const pts = cubes.map((c) => cubeToPixelFlat(c, layout));
+    const cx = (Math.min(...pts.map((p) => p.x)) + Math.max(...pts.map((p) => p.x))) / 2;
+    const cy = (Math.min(...pts.map((p) => p.y)) + Math.max(...pts.map((p) => p.y))) / 2;
+    assert.ok(Math.abs(cx - w / 2) < 1, `cx ${cx}`);
+    assert.ok(Math.abs(cy - h / 2) < 1, `cy ${cy}`);
   });
 });
 

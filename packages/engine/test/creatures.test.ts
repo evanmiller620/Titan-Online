@@ -214,11 +214,13 @@ describe("recruitment logic — Tower special cases", () => {
 });
 
 describe("acquirables crossing thresholds", () => {
-  it("crossing 100 earns an Angel; crossing 500 earns an Archangel", () => {
-    assert.deepEqual(acquirablesCrossed(40, 120), ["Angel"]);
-    assert.deepEqual(acquirablesCrossed(460, 520), ["Archangel"]);
-    assert.deepEqual(acquirablesCrossed(50, 600), ["Angel", "Archangel"]);
-    assert.deepEqual(acquirablesCrossed(120, 180), []); // no new threshold
+  it("earns an Angel at EACH multiple of 100, an Archangel at multiples of 500 (Avalon Hill)", () => {
+    assert.deepEqual(acquirablesCrossed(40, 120), ["Angel"]); // crosses 100
+    assert.deepEqual(acquirablesCrossed(120, 180), []); // crosses no multiple
+    assert.deepEqual(acquirablesCrossed(150, 450), ["Angel", "Angel", "Angel"]); // 200,300,400
+    assert.deepEqual(acquirablesCrossed(460, 520), ["Archangel"]); // 500 → Archangel
+    // 0→600 passes 100,200,300,400 (Angels), 500 (Archangel), 600 (Angel).
+    assert.deepEqual(acquirablesCrossed(0, 600), ["Angel", "Angel", "Angel", "Angel", "Archangel", "Angel"]);
   });
 });
 

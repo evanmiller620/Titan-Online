@@ -43,7 +43,7 @@ export class MasterboardRenderer {
 
   constructor(app: Application, width: number, height: number) {
     this.app = app;
-    this.ext = { cols: 15, rows: 8, width, height, margin: 48 };
+    this.ext = { cols: 15, rows: 8, width, height, margin: 22 };
     this.app.stage.addChild(this.layer);
     this.precomputePositions();
   }
@@ -75,6 +75,17 @@ export class MasterboardRenderer {
     });
   }
 
+  /** Re-derive the extent from the CURRENT canvas so the wheel always fills
+   *  and centres in the live board area (never hidden under the side panels). */
+  private syncExtent(): void {
+    const rend = this.app.renderer as { width?: number; height?: number } | undefined;
+    const w = rend?.width || this.app.screen?.width || this.ext.width;
+    const h = rend?.height || this.app.screen?.height || this.ext.height;
+    if (w === this.ext.width && h === this.ext.height) return;
+    this.ext = { ...this.ext, width: w, height: h };
+    this.precomputePositions();
+  }
+
   /** Re-draw the whole board from a redacted snapshot. Idempotent. */
   render(
     view: GameStateView,
@@ -82,6 +93,7 @@ export class MasterboardRenderer {
     hoveredLand: number | null,
     highlightLands: ReadonlySet<number> = new Set(),
   ): void {
+    this.syncExtent();
     this.layer.removeChildren();
     const r = this.cellRadius();
 
@@ -181,7 +193,7 @@ export class MasterboardRenderer {
   private cellRadius(): number {
     const stepX = (this.ext.width - 2 * this.ext.margin) / (this.ext.cols + 1);
     const stepY = (this.ext.height - 2 * this.ext.margin) / (this.ext.rows + 1);
-    return Math.min(stepX, stepY) * 0.46;
+    return Math.min(stepX, stepY) * 0.56;
   }
 
   private localPoint(e: unknown): Point {

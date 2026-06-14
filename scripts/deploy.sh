@@ -1,0 +1,1 @@
+pnpm --filter @titan/client dev
