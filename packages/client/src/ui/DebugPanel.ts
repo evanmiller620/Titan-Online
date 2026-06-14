@@ -1,7 +1,7 @@
 /**
  * Debug panel (Titan client, ui) — a left-docked inspector for the full game
- * state and the FSM. Imperative DOM (matching multiplayer.ts/preview.ts), so it
- * drops into any mount without a React tree. All data shaping is the pure,
+ * state and the FSM. Imperative DOM (no framework), so it drops into any mount
+ * without a React tree. All data shaping is the pure,
  * tested debugModel.ts; this file is presentation only.
  *
  * UX goals: legible at a glance, never in the way. A sticky header with search,

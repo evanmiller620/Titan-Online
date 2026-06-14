@@ -1,17 +1,14 @@
 /**
  * App entry (Titan client).
  *
- * The single script the page loads. It chooses ONE of two experiences at boot,
- * based on whether the Supabase env vars were present at BUILD time (Vite
- * inlines import.meta.env.*):
- *
- *   - both set  → the database-backed multiplayer client (room-code lobby).
- *   - unset     → the zero-config live Masterboard preview (no backend).
- *
- * This is the wiring DEPLOYMENT.md describes: set VITE_SUPABASE_URL and
- * VITE_SUPABASE_ANON_KEY in the host and rebuild to switch from preview to the
- * live table. Because the values are build-time, the choice is fixed per build.
+ * One debug-first client. By default it boots a LOCAL hot-seat game — the pure
+ * engine runs in the browser, every seat is drivable from this screen, and no
+ * backend is needed, so it always works. If the Supabase env vars were set at
+ * build time, it instead opens the networked lobby (create/join a table) and
+ * runs the same UI over the server.
  */
+
+import { bootLocal, bootRemoteLobby } from "./debugClient.ts";
 
 interface ViteEnv {
   readonly VITE_SUPABASE_URL?: string;
@@ -19,11 +16,10 @@ interface ViteEnv {
 }
 const env = ((import.meta as unknown as { env?: ViteEnv }).env ?? {}) as ViteEnv;
 
-const url = env.VITE_SUPABASE_URL;
-const key = env.VITE_SUPABASE_ANON_KEY;
-
-if (url && key) {
-  void import("./multiplayer.ts").then((m) => m.startMultiplayer(url, key));
+if (env.VITE_SUPABASE_URL && env.VITE_SUPABASE_ANON_KEY) {
+  void import("../net/supabase.ts").then(({ makeClient }) =>
+    bootRemoteLobby(makeClient({ supabaseUrl: env.VITE_SUPABASE_URL!, supabaseAnonKey: env.VITE_SUPABASE_ANON_KEY! })),
+  );
 } else {
-  void import("./preview.ts").then((m) => m.renderPreview());
+  bootLocal(2);
 }
