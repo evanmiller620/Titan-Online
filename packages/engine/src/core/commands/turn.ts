@@ -34,8 +34,10 @@ import type { DomainEvent, LegionId } from "../events/DomainEvent.ts";
 import { onlyPlayer, PUBLIC } from "../events/DomainEvent.ts";
 import type { Rng } from "../rng/Rng.ts";
 import {
+  activePlayerId,
   isSubMultiset,
   legionHeight,
+  legionsOf,
   pendingEngagements,
   subtractMultiset,
 } from "../../state/selectors.ts";
@@ -285,18 +287,18 @@ export class EndMovementCommand extends BaseCommand<Record<string, never>> {
     if (state.turn.movementRoll === null) {
       return invalid(ValidationCode.MOVEMENT_NOT_ROLLED, "roll movement first");
     }
-    // Every legion that CAN move MUST have moved before the phase ends.
-    const owing = unmovedButAble(state);
-    if (owing !== null) {
-      return invalid(
-        ValidationCode.MUST_MOVE,
-        `legion ${owing} can move and so must move before ending Movement`,
-      );
+    // Avalon Hill: a player must move AT LEAST ONE legion (not all). If none
+    // has moved yet but at least one still can, the phase may not end.
+    const me = activePlayerId(state)!;
+    const movedAny = legionsOf(state, me).some((l) => l.moved);
+    if (!movedAny && unmovedButAble(state) !== null) {
+      return invalid(ValidationCode.MUST_MOVE, "you must move at least one legion before ending Movement");
     }
     return valid;
   }
 
   protected override apply(draft: Draft, _rng: Rng, events: DomainEvent[]): void {
+    recombineSplits(draft, events);
     this.fireFsm(draft, events, GameEvent.MOVEMENT_COMPLETED);
     // Empty engagement list: resolve the phase immediately. One topology,
     // zero special cases — the chain happens in command land, not the FSM.
@@ -352,5 +354,34 @@ export class EndTurnCommand extends BaseCommand<Record<string, never>> {
       turnNumber,
     });
     this.fireFsm(draft, events, GameEvent.TURN_ENDED);
+  }
+}
+
+/**
+ * Recombine any of the active player's legions left sharing a land at the end of
+ * Movement — split halves that didn't separate merge back into one legion, and
+ * the freed marker returns to the pool (Avalon Hill: stacks that split but stay
+ * put recombine, since you need only move ONE legion).
+ */
+function recombineSplits(draft: Draft, events: DomainEvent[]): void {
+  const me = activePlayerId(draft);
+  if (!me) return;
+  const byLand = new Map<number, ReturnType<typeof legionsOf>>();
+  for (const l of legionsOf(draft, me)) {
+    const arr = byLand.get(l.land) ?? [];
+    arr.push(l);
+    byLand.set(l.land, arr);
+  }
+  for (const [land, legs] of byLand) {
+    if (legs.length < 2) continue;
+    const sorted = [...legs].sort((a, b) => a.marker.localeCompare(b.marker));
+    const keep = sorted[0]!;
+    const freed = sorted.slice(1).map((r) => r.marker);
+    const merged = sorted.flatMap((l) => l.creatures);
+    draft.legions[keep.marker] = { ...draft.legions[keep.marker]!, creatures: merged, splitThisTurn: false };
+    for (const m of freed) delete draft.legions[m];
+    const player = draft.players[me]!;
+    draft.players[me] = { ...player, markersAvailable: [...player.markersAvailable, ...freed].sort() };
+    events.push({ type: "LegionsRecombined", audience: PUBLIC, playerId: me, into: keep.marker, from: freed, land });
   }
 }

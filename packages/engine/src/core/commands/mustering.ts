@@ -41,7 +41,7 @@ import type { Rng } from "../rng/Rng.ts";
 import { legionHeight } from "../../state/selectors.ts";
 import { getLand } from "../../masterboard/board.data.ts";
 import { MAX_LEGION_HEIGHT, type CreatureName } from "../../creatures/names.ts";
-import { canRecruit } from "../../creatures/recruitment.ts";
+import { canRecruit, eligibleRecruits } from "../../creatures/recruitment.ts";
 
 export interface MusterPayload {
   readonly legionId: LegionId;
@@ -115,6 +115,14 @@ export class MusterCommand extends BaseCommand<MusterPayload> {
     };
     draft.caretaker[creature] = draft.caretaker[creature] - 1;
 
+    // The prerequisite creatures the player must publicly REVEAL to justify the
+    // recruit (e.g. two Centaurs to breed a Lion). Tower basics reveal nothing.
+    const land = getLand(legion.land)!;
+    const option = eligibleRecruits(
+      land.terrain, legion.creatures, draft.caretaker,
+      { containsOwnTitan: legion.creatures.includes("Titan") },
+    ).find((o) => o.creature === creature);
+
     events.push({
       type: "CreatureRecruited",
       audience: PUBLIC,
@@ -122,6 +130,7 @@ export class MusterCommand extends BaseCommand<MusterPayload> {
       legionId: legion.marker,
       land: legion.land,
       newHeight: legion.creatures.length + 1,
+      revealed: option ? [...option.via] : [],
     });
     events.push({
       type: "CreatureRecruitedDetail",

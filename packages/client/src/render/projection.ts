@@ -91,35 +91,6 @@ function cubeRound(fx: number, fy: number, fz: number): CubeCoord {
   return { x: rx + 0, y: ry + 0, z: rz + 0 };
 }
 
-/**
- * Masterboard wheel placement. The 96 lands sit on a 15×8 Colossus grid; we
- * map (col,row) into a centered pixel field. The board is wider than tall, so
- * we scale columns and rows independently to fill the viewport while keeping
- * the wheel's proportions. Pure function of the land's grid coords.
- */
-export interface BoardExtent {
-  readonly cols: number; // grid columns (15 for the Default masterboard)
-  readonly rows: number; // grid rows (8)
-  readonly width: number; // viewport px
-  readonly height: number;
-  readonly margin: number;
-}
-
-export function masterLandToPixel(
-  col: number,
-  row: number,
-  ext: BoardExtent,
-): Point {
-  const usableW = ext.width - 2 * ext.margin;
-  const usableH = ext.height - 2 * ext.margin;
-  // +1 so the last col/row isn't flush against the margin edge.
-  const stepX = usableW / (ext.cols + 1);
-  const stepY = usableH / (ext.rows + 1);
-  return {
-    x: ext.margin + stepX * (col + 1),
-    y: ext.margin + stepY * (row + 1),
-  };
-}
 
 /**
  * The unit-size pixel bounds of a set of hexes (centres only, size = 1). Used to
@@ -152,6 +123,55 @@ export function fitHexLayout(cubes: readonly CubeCoord[], width: number, height:
   const cx = (b.minX + b.maxX) / 2;
   const cy = (b.minY + b.maxY) / 2;
   return { size, origin: { x: width / 2 - size * cx, y: height / 2 - size * cy } };
+}
+
+// ---------------------------------------------------------------------------
+// Masterboard layout — the AUTHENTIC board geometry.
+//
+// The masterboard is NOT a sheared hex tessellation: it is a solid hexagonal
+// honeycomb of 96 lands whose (col,row) grid, plotted DIRECTLY (no odd-q
+// shear), reproduces the original 1980 board — a regular hexagon with the
+// six towers at its vertices and the Mountains/Tundra summit at its centre.
+// Insetting each hex opens the black gaps between lands. Cube coords (used by
+// the battle board) would shear this into a lopsided blob, so the masterboard
+// uses its own simple grid projection here.
+// ---------------------------------------------------------------------------
+
+export interface GridLayout {
+  /** Pixel step per column / row. */
+  readonly sx: number;
+  readonly sy: number;
+  /** Hex radius (inset below the grid step so gaps show). */
+  readonly size: number;
+  /** Pixel position that grid (0,0) maps to. */
+  readonly origin: Point;
+}
+
+export interface GridCell { readonly col: number; readonly row: number }
+
+/** Fit the (col,row) grid of `cells` into width×height (minus margin), centred,
+ *  with hexes inset so the board reads as a hexagon of separated lands. */
+export function fitColRowLayout(cells: readonly GridCell[], width: number, height: number, margin: number): GridLayout {
+  let minC = Infinity, maxC = -Infinity, minR = Infinity, maxR = -Infinity;
+  for (const c of cells) {
+    if (c.col < minC) minC = c.col;
+    if (c.col > maxC) maxC = c.col;
+    if (c.row < minR) minR = c.row;
+    if (c.row > maxR) maxR = c.row;
+  }
+  const spanC = (maxC - minC) || 1;
+  const spanR = (maxR - minR) || 1;
+  const sx = (width - 2 * margin) / (spanC + 2);
+  const sy = (height - 2 * margin) / (spanR + 2);
+  const size = Math.max(1, Math.min(sx * 0.46, sy * 0.56));
+  const cx = (minC + maxC) / 2;
+  const cy = (minR + maxR) / 2;
+  return { sx, sy, size, origin: { x: width / 2 - sx * cx, y: height / 2 - sy * cy } };
+}
+
+/** Project a (col,row) cell to its pixel centre under a GridLayout. */
+export function colRowToPixel(cell: GridCell, layout: GridLayout): Point {
+  return { x: layout.origin.x + cell.col * layout.sx, y: layout.origin.y + cell.row * layout.sy };
 }
 
 /** Distance between two points (for nearest-land hit testing on the wheel). */

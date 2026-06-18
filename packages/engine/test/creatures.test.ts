@@ -299,10 +299,13 @@ describe("MusterCommand", () => {
     assert.ok(after.legions[legionId]!.recruitedThisTurn);
     assert.equal(after.caretaker.Cyclops, cyclopsBefore - 1);
 
-    // Public event hides identity; owner event reveals it.
+    // Public event hides identity but REVEALS the prerequisite (the Gargoyles);
+    // owner event reveals the recruited creature.
     const pub = visibleTo(events, "p2");
     const own = visibleTo(events, "p1");
-    assert.ok(pub.some((e) => e.type === "CreatureRecruited"));
+    const recruited = pub.find((e) => e.type === "CreatureRecruited");
+    assert.ok(recruited);
+    assert.deepEqual((recruited as { revealed: string[] }).revealed, ["Gargoyle", "Gargoyle"]);
     assert.ok(!pub.some((e) => e.type === "CreatureRecruitedDetail"));
     assert.ok(own.some((e) => e.type === "CreatureRecruitedDetail"));
 

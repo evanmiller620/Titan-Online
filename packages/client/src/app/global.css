@@ -12,15 +12,37 @@ html, body, #root {
   color: var(--c-ink, #1C1A17);
   font-family: var(--font-body, system-ui, sans-serif);
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 /* Keyboard focus is always visible — never removed. */
 :focus-visible {
-  outline: 2px solid var(--c-oxblood, #6B2737);
+  outline: 2px solid var(--c-brass-bright, #CBA86B);
   outline-offset: 2px;
+  border-radius: 3px;
 }
 button:focus:not(:focus-visible) { outline: none; }
-button { transition: background 120ms ease, color 120ms ease, opacity 120ms ease; }
+button { transition: background 120ms ease, color 120ms ease, opacity 120ms ease, transform 80ms ease; }
+
+/* Custom scrollbars for the dark chrome panels (subtle brass thumb). */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(176,141,87,0.45) transparent;
+}
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(176,141,87,0.40);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(203,168,107,0.65); background-clip: padding-box; }
+
+/* Reusable entrance for overlays/drawers. */
+@keyframes titan-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes titan-slide-in { from { opacity: 0; transform: translateX(-12px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes titan-pop-in { from { opacity: 0; transform: scale(0.97); } to { opacity: 1; transform: scale(1); } }
 
 /* Honour reduced-motion: disable non-essential transitions/animations. */
 @media (prefers-reduced-motion: reduce) {

@@ -123,6 +123,10 @@ export interface CreatureRecruited extends EventBase {
   readonly legionId: LegionId;
   readonly land: LandId;
   readonly newHeight: number;
+  /** The prerequisite creatures publicly REVEALED to justify the recruit
+   *  (empty for Tower basics, which need no prerequisite). The recruited
+   *  creature itself stays hidden — only the prerequisite is shown. */
+  readonly revealed: readonly CreatureName[];
 }
 
 export interface CreatureRecruitedDetail extends EventBase {
@@ -153,6 +157,15 @@ export interface CombatantSlain extends EventBase {
 export interface CombatantMoved extends EventBase {
   readonly type: "CombatantMoved";
   readonly combatantId: string;
+}
+
+/** Split legions left sharing a land at end of Movement recombine into one. */
+export interface LegionsRecombined extends EventBase {
+  readonly type: "LegionsRecombined";
+  readonly playerId: PlayerId;
+  readonly into: LegionId;
+  readonly from: readonly LegionId[];
+  readonly land: LandId;
 }
 
 export interface TurnEnded extends EventBase {
@@ -268,6 +281,7 @@ export type DomainEvent =
   | LegionSplitDetail
   | MovementRolled
   | LegionMoved
+  | LegionsRecombined
   | CreatureRecruited
   | CreatureRecruitedDetail
   | StrikeResolved

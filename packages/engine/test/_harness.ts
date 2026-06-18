@@ -111,6 +111,7 @@ export interface TurnOptions {
  * muster → end turn. Returns the state after EndTurn (or after the game ends).
  */
 export function playTurn(s: State, opts: TurnOptions = {}): State {
+  if (s.fsm.path === "GameOver") return s; // the game already ended
   const pid = active(s);
   const roll = opts.roll ?? 3;
 

@@ -5,15 +5,15 @@ import {
   cubeToPixelFlat,
   pixelToCubeFlat,
   hexCornersFlat,
-  masterLandToPixel,
   nearestLand,
   distance,
   hexBounds,
   fitHexLayout,
+  fitColRowLayout,
+  colRowToPixel,
   type HexLayout,
-  type BoardExtent,
 } from "../src/render/projection.ts";
-import { BATTLE_MAPS } from "@titan/engine";
+import { BATTLE_MAPS, MASTER_LANDS } from "@titan/engine";
 
 const cube = (x: number, y: number, z: number) => ({ x, y, z });
 
@@ -95,26 +95,45 @@ describe("fit-to-bounds battle layout", () => {
   });
 });
 
-describe("masterboard wheel placement", () => {
-  const ext: BoardExtent = { cols: 15, rows: 8, width: 1200, height: 800, margin: 40 };
+describe("masterboard col/row layout — authentic hexagon", () => {
+  const cells = MASTER_LANDS.map((l) => ({ col: l.col, row: l.row }));
+  const towers = MASTER_LANDS.filter((l) => l.terrain === "Tower");
 
-  it("keeps every land inside the margins", () => {
-    for (let col = 0; col < ext.cols; col++) {
-      for (let row = 0; row < ext.rows; row++) {
-        const p = masterLandToPixel(col, row, ext);
-        assert.ok(p.x >= ext.margin && p.x <= ext.width - ext.margin, `x ${p.x}`);
-        assert.ok(p.y >= ext.margin && p.y <= ext.height - ext.margin, `y ${p.y}`);
-      }
+  it("inset hexes leave a gap (size below half the column step)", () => {
+    const L = fitColRowLayout(cells, 900, 680, 18);
+    assert.ok(L.size < L.sx * 0.5, `hex ${L.size} should be inset under sx/2 ${L.sx / 2}`);
+    assert.ok(L.size < L.sy * 0.6);
+  });
+
+  it("places the six towers at the hexagon's vertices (≈60° apart)", () => {
+    const w = 900, h = 680;
+    const L = fitColRowLayout(cells, w, h, 18);
+    assert.equal(towers.length, 6);
+    const angles = towers
+      .map((t) => {
+        const p = colRowToPixel({ col: t.col, row: t.row }, L);
+        return (Math.atan2(p.y - h / 2, p.x - w / 2) * 180) / Math.PI;
+      })
+      .map((a) => (a + 360) % 360)
+      .sort((x, y) => x - y);
+    // Consecutive towers should be roughly a sixth of the circle apart.
+    for (let i = 0; i < 6; i++) {
+      const gap = ((angles[(i + 1) % 6]! - angles[i]! + 360) % 360);
+      assert.ok(Math.abs(gap - 60) < 22, `tower gap ${gap.toFixed(0)}° near 60°`);
     }
   });
 
-  it("orders lands left-to-right and top-to-bottom", () => {
-    const a = masterLandToPixel(0, 0, ext);
-    assert.ok(masterLandToPixel(5, 0, ext).x > a.x, "higher col → larger x");
-    assert.ok(masterLandToPixel(0, 4, ext).y > a.y, "higher row → larger y");
+  it("keeps every land inside the canvas and centred", () => {
+    const w = 800, h = 600, L = fitColRowLayout(cells, w, h, 18);
+    const pts = cells.map((c) => colRowToPixel(c, L));
+    for (const p of pts) { assert.ok(p.x >= 0 && p.x <= w); assert.ok(p.y >= 0 && p.y <= h); }
+    const cx = (Math.min(...pts.map((p) => p.x)) + Math.max(...pts.map((p) => p.x))) / 2;
+    assert.ok(Math.abs(cx - w / 2) < 1, `cx ${cx}`);
   });
+});
 
-  it("nearestLand finds the closest land and respects the miss radius", () => {
+describe("nearestLand hit-testing", () => {
+  it("finds the closest land and respects the miss radius", () => {
     const positions = [
       { id: 100, point: { x: 100, y: 100 } },
       { id: 200, point: { x: 300, y: 100 } },

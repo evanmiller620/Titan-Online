@@ -28,6 +28,9 @@ import { MASTER_LANDS } from "./board.data.ts";
 import { canStopVia, landById, traversableSteps } from "./graph.ts";
 import { TOWER_LANDS, isTower } from "./constants.ts";
 
+/** Central summit lands are numbered 1000+ (1000…6000). */
+const SUMMIT_MIN_ID = 1000;
+
 /** One legal route to a destination: the land sequence including start & end. */
 export interface MovementRoute {
   readonly destination: LandId;
@@ -79,6 +82,10 @@ export function destinationsForRoll(
       return;
     }
     for (const edge of traversableSteps(current, cameFrom)) {
+      // Inner-ring summit gateways are "thick dotted lines": a legion may cross
+      // into the central summit (lands ≥ 1000) ONLY on its SECOND step (Law of
+      // Titan). `path.length` is the number of this step (1 = first step).
+      if (edge.type === "ARCH" && edge.to >= SUMMIT_MIN_ID && path.length !== 2) continue;
       path.push(edge.to);
       walk(edge.to, current, stepsLeft - 1, path, edge.type);
       path.pop();

@@ -14,7 +14,7 @@
 
 import { BATTLE_MAPS, attackerEntryHexes, defenderEntryHexes, indexMap, movementRulesFor, isImpassableTerrain } from "../battleland/index.ts";
 import { reachable, cubeKey, cubeNeighbor, cubeDistance, type CubeCoord } from "../hex/index.ts";
-import { CREATURE_STATS, eligibleRecruits, LORDS } from "../creatures/index.ts";
+import { CREATURE_STATS, eligibleRecruits, LORDS, RECRUIT_CHAINS, TOWER_CREATURES } from "../creatures/index.ts";
 import { destinationsForRoll, towerTeleportTargets, titanTeleportTargets, isTower, getLand, MASTER_LANDS, type MasterTerrain } from "../masterboard/index.ts";
 import { PLAYER_COLORS } from "../state/GameState.ts";
 import type { GameStateView } from "../state/views.ts";
@@ -380,6 +380,29 @@ function labelAt(terrain: string, key: string): string {
   return h ? h.label : "";
 }
 
+/**
+ * Fastplay: the single FORCED command to auto-play, or null. Returns a command
+ * only when there is genuinely one option and NO board interaction could be an
+ * alternative — so it streamlines busywork (rolling, a lone pick, a forced
+ * phase-end) without ever skipping a real decision (moving, recruiting,
+ * splitting, fighting).
+ */
+export function autoAction(view: GameStateView, seat: string, sel: Selection): CommandDTO | null {
+  const acts = legalActions(view, seat, sel);
+  if (acts.length !== 1) return null;
+  const path = view.fsm.path;
+  if (path.includes("Battle.")) return null; // battles are all choices
+  // Movement: don't auto-end if a legion can still move.
+  if (path.endsWith("Movement") && view.turn.movementRoll != null
+      && seatLegions(view, seat).some((l) => l.destinations.length > 0)) return null;
+  // Mustering: don't auto-end if a legion can still recruit.
+  if (path.endsWith("Mustering") && seatLegions(view, seat).some((l) => l.recruits.length > 0)) return null;
+  // Commencement: don't auto-end if a legion can still split (height ≥ 4).
+  if (path.endsWith("Commencement")
+      && Object.values(view.legions).some((l) => l.ownerId === seat && l.height >= 4)) return null;
+  return acts[0]!.dto;
+}
+
 // ---------------------------------------------------------------------------
 // UI queries — "what are my legions" and "where can this one move"
 // ---------------------------------------------------------------------------
@@ -396,23 +419,69 @@ export interface LegionInfo {
   /** Legal masterboard destinations right now (empty unless it's Movement and
    *  the legion can still move). */
   readonly destinations: readonly number[];
+  /** Creatures this legion could muster right now (empty unless in the
+   *  Mustering phase and the legion is eligible). */
+  readonly recruits: readonly string[];
 }
 
 /** A seat's own legions with the detail a roster panel shows. */
 export function seatLegions(view: GameStateView, seat: string): LegionInfo[] {
+  const mustering = view.fsm.path.endsWith("Mustering");
   return Object.values(view.legions)
     .filter((l) => l.ownerId === seat)
     .sort((a, b) => a.marker.localeCompare(b.marker))
-    .map((l) => ({
-      marker: l.marker,
-      land: l.land,
-      terrain: getLand(l.land)?.terrain ?? "—",
-      height: l.height,
-      creatures: l.creatures,
-      moved: l.moved,
-      recruited: l.recruitedThisTurn,
-      destinations: reachableLands(view, seat, l.marker),
-    }));
+    .map((l) => {
+      const land = getLand(l.land);
+      const creatures = l.creatures;
+      const canRecruit = mustering && l.moved && !l.recruitedThisTurn && l.height < 7 && !!land && !!creatures;
+      const recruits = canRecruit
+        ? eligibleRecruits(land!.terrain, creatures! as never, view.caretaker, { containsOwnTitan: creatures!.includes("Titan") }).map((o) => o.creature)
+        : [];
+      return {
+        marker: l.marker, land: l.land, terrain: land?.terrain ?? "—", height: l.height,
+        creatures, moved: l.moved, recruited: l.recruitedThisTurn,
+        destinations: reachableLands(view, seat, l.marker), recruits,
+      };
+    });
+}
+
+/** One musterable creature on a land, with the prerequisite a legion must
+ *  already hold (and reveal) to recruit it. */
+export interface MusterEntry {
+  readonly creature: string;
+  /** What the legion must contain — the "info you give" to muster, e.g. "2× Centaur". */
+  readonly requires: string;
+}
+
+/** Terrain + the full muster chain (with prerequisites) for a land — for the
+ *  hover tooltip. Static per land; explains what you can recruit there and the
+ *  creatures you must reveal to do it. */
+export function landSummary(landId: number): {
+  id: number;
+  terrain: string;
+  isTower: boolean;
+  muster: MusterEntry[];
+} {
+  const land = getLand(landId);
+  if (!land) return { id: landId, terrain: "—", isTower: false, muster: [] };
+  if (land.terrain === "Tower") {
+    return {
+      id: landId, terrain: "Tower", isTower: true,
+      muster: [
+        ...TOWER_CREATURES.map((c) => ({ creature: c, requires: "any legion" })),
+        { creature: "Warlock", requires: "your Titan (or a Warlock)" },
+        { creature: "Guardian", requires: "3 of one kind" },
+      ],
+    };
+  }
+  const chain = RECRUIT_CHAINS[land.terrain] ?? [];
+  const muster = chain.map((tier, i) => ({
+    creature: tier.creature,
+    requires: i === 0
+      ? `${tier.needPrev}× ${tier.creature}`
+      : `${tier.needPrev}× ${chain[i - 1]!.creature}`,
+  }));
+  return { id: landId, terrain: land.terrain, isTower: false, muster };
 }
 
 /** The legal destination lands for a seat's legion during Movement (for board

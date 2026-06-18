@@ -27,19 +27,21 @@ export const palette = {
   seal: "#5A1D29", // wax-seal marker for hidden stacks
 } as const;
 
-/** Per-terrain map tints for the eleven battlelands / masterboard lands. */
+/** Per-terrain map tints for the eleven battlelands / masterboard lands.
+ *  Echoes the 1980 board's terrain key (yellow plains, red mountains, white
+ *  tundra/towers) while staying within the brass-and-vellum palette. */
 export const terrainColor: Record<string, string> = {
-  Plains: "#D9CDA0",
-  Woods: "#7E8B5A",
-  Brush: "#A9A45C",
-  Jungle: "#5F7A43",
-  Desert: "#D8B878",
-  Hills: "#C29A5E",
-  Mountains: "#9C8B7A",
-  Swamp: "#6E7C5E",
-  Marsh: "#7C8466",
-  Tundra: "#C9D2D0",
-  Tower: "#9A8466",
+  Plains: "#E0CF93", // pale gold
+  Woods: "#7E9456", // forest green
+  Brush: "#B7B25C", // olive
+  Jungle: "#4F7A3E", // deep green
+  Desert: "#E0B36A", // sand
+  Hills: "#C79A5A", // tan-brown
+  Mountains: "#A85B47", // brick red
+  Swamp: "#5E86A0", // blue-grey water
+  Marsh: "#8A8560", // muddy tan
+  Tundra: "#D6DDDA", // pale ice
+  Tower: "#E7DDC2", // vellum white
 };
 
 export const type = {
@@ -67,6 +69,21 @@ export const space = {
   xl: "40px",
 } as const;
 
+/** Corner radii — consistent, slightly soft, never pill-by-accident. */
+export const radius = {
+  sm: "4px",
+  md: "6px",
+  lg: "10px",
+  pill: "999px",
+} as const;
+
+/** Elevation — layered shadows tuned for the dark chrome (warm, not flat black). */
+export const elevation = {
+  sm: "0 1px 2px rgba(0,0,0,0.35)",
+  md: "0 6px 18px rgba(0,0,0,0.40)",
+  lg: "0 18px 50px rgba(0,0,0,0.55)",
+} as const;
+
 /** Emit the tokens as a :root CSS custom-property block (injected once). */
 export function tokensCss(): string {
   const vars: string[] = [];
@@ -76,6 +93,8 @@ export function tokensCss(): string {
   vars.push(`  --font-mono: ${type.mono};`);
   for (const [k, v] of Object.entries(type.scale)) vars.push(`  --fs-${k}: ${v};`);
   for (const [k, v] of Object.entries(space)) vars.push(`  --sp-${k}: ${v};`);
+  for (const [k, v] of Object.entries(radius)) vars.push(`  --radius-${k}: ${v};`);
+  for (const [k, v] of Object.entries(elevation)) vars.push(`  --shadow-${k}: ${v};`);
   return `:root {\n${vars.join("\n")}\n}`;
 }
 

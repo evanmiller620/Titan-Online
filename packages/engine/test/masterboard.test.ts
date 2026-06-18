@@ -190,11 +190,21 @@ describe("masterboard movement", () => {
     }
   });
 
-  it("a roll of 1 from land 1 can continue the track (2) or enter the summit via ARCH (1000)", () => {
-    // Land 1 has TWO exits: ARROWS->2 (continue) and ARCH->1000 (enter
-    // summit). Both are legal one-step stops, exactly as on the board.
-    const one = destinationsForRoll(1, 1);
-    assert.deepEqual(one.map((r) => r.destination).sort((a, b) => a - b), [2, 1000]);
+  it("inner-ring summit gateways (thick dotted lines) are crossable only on the SECOND step", () => {
+    // Land 1 has ARROWS->2 and ARCH->1000 (summit gateway). On a roll of 1 the
+    // gateway may NOT be crossed on the first step, so only the track (2) is legal.
+    assert.deepEqual(destinationsForRoll(1, 1).map((r) => r.destination).sort((a, b) => a - b), [2]);
+    // A summit is never ENTERED in one step from outside (within-summit moves
+    // via the linking ARROWs are fine, so skip summit start lands).
+    for (const l of MASTER_LANDS) {
+      if (l.id >= 1000) continue;
+      assert.ok(!destinationsForRoll(l.id, 1).some((r) => r.destination >= 1000), `summit entered in 1 step from ${l.id}`);
+    }
+    // But a summit IS reachable on a two-step move (crossing on the second step).
+    assert.ok(
+      MASTER_LANDS.some((l) => destinationsForRoll(l.id, 2).some((r) => r.destination >= 1000)),
+      "a summit should be reachable on the second step",
+    );
   });
 
   it("can loop back to the start on a long roll (legal in Titan)", () => {
@@ -296,18 +306,38 @@ describe("move commands in the turn flow", () => {
     rejects(s, new MoveLegionCommand("p1", { legionId: "Black-01", destination: dest }), ValidationCode.ALREADY_MOVED);
   });
 
-  it("EndMovement is blocked while a legion that can move hasn't moved", () => {
+  it("EndMovement needs ONLY one legion moved (Avalon Hill), not all of them", () => {
     let s = atMovement();
     s = exec(s, new RollMovementCommand("p1", {}), scriptedRng([3])).state;
     // Two legions at tower 100, neither moved yet → MUST_MOVE.
     rejects(s, new EndMovementCommand("p1", {}), ValidationCode.MUST_MOVE);
-    // Move both, then ending is allowed.
+    // Moving just ONE is enough; the other may stay put.
     const d1 = destinationsForRoll(100, 3)[0]!.destination;
-    const d2 = destinationsForRoll(100, 3).find((r) => r.destination !== d1)?.destination ?? d1;
     s = exec(s, new MoveLegionCommand("p1", { legionId: "Black-01", destination: d1 })).state;
-    s = exec(s, new MoveLegionCommand("p1", { legionId: "Black-02", destination: d2 })).state;
     const v = new EndMovementCommand("p1", {}).validate(s);
     assert.ok(v.ok, !v.ok ? v.failure.message : "");
+  });
+
+  it("split legions left sharing a land recombine at end of Movement", () => {
+    let s = atMovement();
+    s = exec(s, new RollMovementCommand("p1", {}), scriptedRng([3])).state;
+    // Black-01 + Black-02 share tower 100 (split halves); add a third legion
+    // elsewhere and move IT to satisfy "move at least one".
+    s = {
+      ...s,
+      legions: {
+        ...s.legions,
+        "Black-01": { ...s.legions["Black-01"]!, splitThisTurn: true },
+        "Black-02": { ...s.legions["Black-02"]!, land: 100, splitThisTurn: true },
+        "Black-03": { marker: "Black-03", ownerId: "p1", land: 1, creatures: ["Centaur", "Centaur"], moved: true, splitThisTurn: false, recruitedThisTurn: false, revealed: false },
+      },
+    };
+    const before = s.legions["Black-01"]!.creatures.length + s.legions["Black-02"]!.creatures.length;
+    const { state, events } = new EndMovementCommand("p1", {}).execute(s, scriptedRng([]));
+    assert.ok(!state.legions["Black-02"], "the second split half is removed");
+    assert.equal(state.legions["Black-01"]!.creatures.length, before, "merged into one legion");
+    assert.ok(state.players.p1!.markersAvailable.includes("Black-02"), "marker freed");
+    assert.ok(events.some((e) => e.type === "LegionsRecombined"));
   });
 
   it("tower teleport requires a Lord, a Tower start, and an unoccupied target", () => {

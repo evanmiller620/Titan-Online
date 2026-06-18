@@ -111,36 +111,49 @@ export class BattlelandRenderer {
     }
 
     // Combatants (battle reveals both legions → creatures shown openly).
+    const rad = this.layout.size * 0.5;
     for (const c of battle.combatants) {
       if (c.slain || !c.hex) continue;
       const center = cubeToPixelFlat(c.hex, this.layout);
       const isSel = c.id === selected;
-      const disc = new Graphics();
       const fill = c.side === "attacker" ? palette.oxblood : palette.verdigris;
+
+      // Selection glow ring behind the disc.
+      if (isSel) {
+        this.layer.addChild(new Graphics()
+          .circle(center.x, center.y, rad + this.layout.size * 0.14)
+          .stroke({ color: hex(palette.brassBright), width: 3, alpha: 0.9 }));
+      }
+
+      const disc = new Graphics();
+      disc.circle(center.x + rad * 0.12, center.y + rad * 0.16, rad).fill({ color: hex("#000000"), alpha: 0.25 }); // shadow
       disc
-        .circle(center.x, center.y, this.layout.size * 0.5)
+        .circle(center.x, center.y, rad)
         .fill({ color: hex(fill) })
         .stroke({ color: isSel ? hex(palette.brassBright) : hex(palette.vellum), width: isSel ? 3 : 1.5 });
       this.layer.addChild(disc);
 
       const name = new Text({
         text: abbrev(c.creature),
-        style: { fontFamily: "sans-serif", fontSize: this.layout.size * 0.3, fill: hex(palette.vellum), fontWeight: "700" },
+        style: { fontFamily: "sans-serif", fontSize: this.layout.size * 0.32, fill: hex(palette.vellum), fontWeight: "700", stroke: { color: hex("#1A1714"), width: 1 } },
       });
       name.anchor.set(0.5);
       name.x = center.x;
       name.y = center.y;
       this.layer.addChild(name);
 
-      // Damage pips.
+      // Damage as a clear badge at the top-right of the disc.
       if (c.damage > 0) {
+        const bx = center.x + rad * 0.78, by = center.y - rad * 0.78, br = this.layout.size * 0.22;
+        this.layer.addChild(new Graphics().circle(bx, by, br)
+          .fill({ color: hex(palette.alarm) }).stroke({ color: hex(palette.vellum), width: 1.5 }));
         const dmg = new Text({
           text: String(c.damage),
-          style: { fontFamily: "monospace", fontSize: this.layout.size * 0.26, fill: hex(palette.alarm) },
+          style: { fontFamily: "monospace", fontSize: this.layout.size * 0.26, fontWeight: "700", fill: hex(palette.vellum) },
         });
         dmg.anchor.set(0.5);
-        dmg.x = center.x + this.layout.size * 0.4;
-        dmg.y = center.y + this.layout.size * 0.4;
+        dmg.x = bx;
+        dmg.y = by;
         this.layer.addChild(dmg);
       }
     }

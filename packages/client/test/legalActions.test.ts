@@ -11,7 +11,7 @@ import {
 import {
   legalActions, planMasterboardClick, planBattleClick,
   autoDeployPlacements, deployZoneLabels, proposeInitialSplit, battleBanner,
-  seatLegions, reachableLands,
+  seatLegions, reachableLands, autoAction,
   NO_SELECTION, type Selection,
 } from "@titan/engine";
 
@@ -68,6 +68,20 @@ describe("legalActions — setup & turn phases", () => {
     assert.equal(typeof info[0]!.terrain, "string");
   });
 
+  it("seatLegions surfaces recruit options during Mustering (so muster is findable)", () => {
+    // Build a Mustering view with a moved Centaur legion on the Plains (can breed a Lion).
+    const v: any = {
+      gameId: "g", fsm: { path: "Turn.Mustering", returnStack: [] }, playerOrder: ["p1", "p2"],
+      players: { p1: { id: "p1", color: "Black", tower: 100, score: 0, eliminated: false, markersAvailable: [] }, p2: {} },
+      setup: null, turn: { number: 2, activeIndex: 0, movementRoll: 3, mulliganUsed: false },
+      caretaker: Object.fromEntries(["Lion", "Centaur"].map((c) => [c, 9])),
+      legions: { "Black-01": { marker: "Black-01", ownerId: "p1", land: 1, height: 2, moved: true, splitThisTurn: false, recruitedThisTurn: false, revealed: false, creatures: ["Centaur", "Centaur"] } },
+      battle: null, revealedMarkers: [],
+    };
+    const info = seatLegions(v, "p1")[0]!;
+    assert.ok(info.recruits.includes("Lion"), "a moved Centaur legion on Plains can recruit a Lion");
+  });
+
   it("reachableLands reports a movable legion's destinations during Movement", () => {
     let s = afterSetup();
     s = new SplitLegionCommand("p1", proposeInitialSplit(viewFor(s, "p1"), "p1") as any).execute(s, scriptedRng([])).state;
@@ -90,6 +104,41 @@ describe("legalActions — setup & turn phases", () => {
       { outcome: "fight" }, { outcome: "settle", attackerShare: 0.5 }, { outcome: "settle", attackerShare: 1 },
     ]);
     assert.ok(!acts.some((a) => JSON.stringify(a.dto.payload).includes("concede")));
+  });
+});
+
+describe("autoAction — fastplay forced-single-option", () => {
+  it("auto-rolls turn order at game start (the only option)", () => {
+    const s0 = createGame({ gameId: "g", players: [{ id: "p1", name: "A" }, { id: "p2", name: "B" }] });
+    assert.equal(autoAction(viewFor(s0, "p1"), "p1", NO_SELECTION)?.type, "RollTurnOrder");
+  });
+
+  it("auto-rolls movement before a roll, but never auto-ends a phase with moves left", () => {
+    let s = afterSetup();
+    s = new SplitLegionCommand("p1", proposeInitialSplit(viewFor(s, "p1"), "p1") as any).execute(s, scriptedRng([])).state;
+    s = new EndSplitsCommand("p1", {}).execute(s, scriptedRng([])).state;
+    // Pre-roll: RollMovement is forced → auto.
+    assert.equal(autoAction(viewFor(s, "p1"), "p1", NO_SELECTION)?.type, "RollMovement");
+    // After rolling, legions can still move → do NOT auto-end movement.
+    s = new RollMovementCommand("p1", {}).execute(s, scriptedRng([3])).state;
+    assert.equal(autoAction(viewFor(s, "p1"), "p1", NO_SELECTION), null);
+  });
+
+  it("does not auto-end Mustering when a legion can still recruit", () => {
+    const v: any = {
+      gameId: "g", fsm: { path: "Turn.Mustering", returnStack: [] }, playerOrder: ["p1", "p2"],
+      players: { p1: { id: "p1", color: "Black", tower: 100, score: 0, eliminated: false, markersAvailable: [] }, p2: {} },
+      setup: null, turn: { number: 2, activeIndex: 0, movementRoll: 3, mulliganUsed: false },
+      caretaker: Object.fromEntries(["Lion", "Centaur"].map((c) => [c, 9])),
+      legions: { "Black-01": { marker: "Black-01", ownerId: "p1", land: 1, height: 2, moved: true, splitThisTurn: false, recruitedThisTurn: false, revealed: false, creatures: ["Centaur", "Centaur"] } },
+      battle: null, revealedMarkers: [],
+    };
+    assert.equal(autoAction(v, "p1", NO_SELECTION), null);
+  });
+
+  it("never auto-plays inside a battle (battles are all choices)", () => {
+    const dep = battleView("Strike", { activeSide: "attacker", units: [{ id: "atk-0", side: "attacker", creature: "Ogre", label: "C3" }, { id: "def-0", side: "defender", creature: "Centaur", label: "C4" }] });
+    assert.equal(autoAction(dep, "p1", NO_SELECTION), null);
   });
 });
 
