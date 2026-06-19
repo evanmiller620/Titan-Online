@@ -150,7 +150,16 @@ export interface GridLayout {
 export interface GridCell { readonly col: number; readonly row: number }
 
 /** Fit the (col,row) grid of `cells` into width×height (minus margin), centred,
- *  with hexes inset so the board reads as a hexagon of separated lands. */
+ *  with hexes inset so the board reads as a hexagon of separated lands.
+ *
+ *  The lands are flat-top hexes on a near-square lattice (the authentic Titan
+ *  wheel: 15 columns × 8 rows). Earlier this stretched the column and row steps
+ *  to the viewport INDEPENDENTLY — because the grid is far wider than tall, the
+ *  row step ballooned and opened wide empty channels between rows. We now derive
+ *  ONE hex radius that fits both axes and use an equal centre-to-centre step on
+ *  both, so rows pack as tightly as columns and each land is as large as the
+ *  space allows. A flat-top hex spans 2·r wide and √3·r tall; STEP past those
+ *  leaves a thin, even seam. */
 export function fitColRowLayout(cells: readonly GridCell[], width: number, height: number, margin: number): GridLayout {
   let minC = Infinity, maxC = -Infinity, minR = Infinity, maxR = -Infinity;
   for (const c of cells) {
@@ -161,9 +170,14 @@ export function fitColRowLayout(cells: readonly GridCell[], width: number, heigh
   }
   const spanC = (maxC - minC) || 1;
   const spanR = (maxR - minR) || 1;
-  const sx = (width - 2 * margin) / (spanC + 2);
-  const sy = (height - 2 * margin) / (spanR + 2);
-  const size = Math.max(1, Math.min(sx * 0.46, sy * 0.56));
+  const STEP = 2.08; // centre-to-centre in hex radii — ~0.08·r seam past the 2·r width
+  // Largest radius that fits each axis (board spans spanC·STEP·r + 2r wide,
+  // spanR·STEP·r + √3·r tall), then take the binding one.
+  const sizeW = (width - 2 * margin) / (spanC * STEP + 2);
+  const sizeH = (height - 2 * margin) / (spanR * STEP + SQRT3);
+  const size = Math.max(1, Math.min(sizeW, sizeH));
+  const sx = size * STEP;
+  const sy = size * STEP;
   const cx = (minC + maxC) / 2;
   const cy = (minR + maxR) / 2;
   return { sx, sy, size, origin: { x: width / 2 - sx * cx, y: height / 2 - sy * cy } };

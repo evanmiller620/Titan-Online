@@ -197,12 +197,14 @@ export class GameView {
         elem("div", `margin-top:3px;font-size:10px;color:${theme.dim}`, { text: "tap a hex to move or strike" }),
       );
     } else {
+      const arrow = (c: string) => `width:0;height:0;border-top:5px solid transparent;border-bottom:5px solid transparent;border-left:10px solid ${c}`;
       this.legendEl.replaceChildren(
-        title("Movement"),
-        this.legendItem(`width:14px;height:0;border-top:3px solid ${theme.brassBright}`, "track (one-way)"),
-        this.legendItem(`width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-bottom:9px solid ${theme.verdigris}`, "gateway"),
+        title("Directions"),
+        this.legendItem(arrow(theme.brassBright), "one-way track →"),
+        this.legendItem(arrow(theme.verdigris), "gateway (pass / stop)"),
+        this.legendItem(`width:4px;height:13px;background:${theme.warn};border-radius:1px`, "blocked — no entry"),
         this.legendItem(`width:12px;height:12px;border:2px solid ${theme.verdigris};border-radius:2px`, "reachable now"),
-        elem("div", `margin-top:3px;font-size:10px;color:${theme.dim}`, { text: "scroll = zoom · drag = pan · hover = links" }),
+        elem("div", `margin-top:3px;font-size:10px;color:${theme.dim}`, { text: "hover a land to light its exits · scroll = zoom · drag = pan" }),
       );
     }
   }

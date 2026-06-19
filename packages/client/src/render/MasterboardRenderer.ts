@@ -55,7 +55,7 @@ export class MasterboardRenderer {
     this.app = app;
     this.w = width;
     this.h = height;
-    this.layout = fitColRowLayout(LAND_CELLS, width, height, 22);
+    this.layout = fitColRowLayout(LAND_CELLS, width, height, 16);
     this.world.addChild(this.base);
     this.world.addChild(this.overlay);
     this.layer.addChild(this.world);
@@ -155,7 +155,7 @@ export class MasterboardRenderer {
     if (w === this.w && h === this.h) return;
     this.w = w;
     this.h = h;
-    this.layout = fitColRowLayout(LAND_CELLS, w, h, 22);
+    this.layout = fitColRowLayout(LAND_CELLS, w, h, 16);
     if (this.layer.hitArea instanceof Rectangle) { this.layer.hitArea.width = w; this.layer.hitArea.height = h; }
     this.precomputePositions();
   }
@@ -229,22 +229,24 @@ export class MasterboardRenderer {
     this.renderOverlay(r); // keep hover highlight in sync after a rebuild
   }
 
-  /** Colour-coded directional connectors for every legal exit. When movement
-   *  highlights are active, only the focal land's connectors stay bright. */
+  /** Colour-coded directional connectors for every legal exit. When a legion is
+   *  selected (movement), only its land's connectors stay bright so the routes
+   *  open to it read clearly; otherwise the whole wheel's flow is visible. */
   private drawConnectors(r: number, reachable: ReadonlySet<number> | null, selected: number | null): void {
     const g = new Graphics();
+    const focusMode = reachable !== null; // a legion is selected
     for (const land of MASTER_LANDS) {
       const A = this.posById.get(land.id);
       if (!A) continue;
-      const focal = !reachable || selected === land.id;
+      const focal = !focusMode || selected === land.id;
       for (const ex of land.exits) {
         const B = this.posById.get(ex.to);
         if (!B) continue;
-        const arch = ex.type === "ARCH";
-        const block = ex.type === "BLOCK";
-        const color = hex(block ? palette.alarm : arch ? palette.verdigris : palette.brassBright);
-        const alpha = (focal ? 0.5 : 0.18) * (block ? 0.7 : 1);
-        connector(g, A, B, r, color, alpha, block, arch, 2);
+        const kind = edgeKind(ex.type);
+        const color = hex(kind === "block" ? palette.alarm : kind === "gateway" ? palette.verdigris : palette.brassBright);
+        const base = focusMode ? (focal ? 0.92 : 0.1) : 0.5;
+        const alpha = kind === "block" ? base * 0.7 : base;
+        connector(g, A, B, r, color, alpha, kind, focal ? 2.4 : 1.7);
       }
     }
     this.base.addChild(g);
@@ -297,16 +299,20 @@ export class MasterboardRenderer {
     if (!A) return;
     const land = LAND_BY_ID.get(id);
     const g = new Graphics();
-    // Outgoing connections, bright.
+    // Outgoing edges, bright + bold — and ring each place you may actually move
+    // to, so "where can I go from here" is answered at a glance.
     for (const ex of land?.exits ?? []) {
       const B = this.posById.get(ex.to);
       if (!B) continue;
-      const block = ex.type === "BLOCK", arch = ex.type === "ARCH";
-      const color = hex(block ? palette.alarm : arch ? palette.verdigris : palette.brassBright);
-      connector(g, A, B, r, color, 0.98, block, arch, 3.2);
+      const kind = edgeKind(ex.type);
+      const color = hex(kind === "block" ? palette.alarm : kind === "gateway" ? palette.verdigris : palette.brassBright);
+      connector(g, A, B, r, color, 0.98, kind, 3.4);
+      if (kind !== "block") {
+        g.poly(hexPoly(B, r + 2)).stroke({ color, width: 2.4, alpha: 0.9 });
+      }
     }
     // Ring on the hovered land.
-    g.poly(hexPoly(A, r + 3)).stroke({ color: hex(palette.brassBright), width: 3, alpha: 0.95 });
+    g.poly(hexPoly(A, r + 3)).stroke({ color: hex(palette.brassBright), width: 3.5, alpha: 0.98 });
     this.overlay.addChild(g);
   }
 
@@ -360,25 +366,52 @@ function hexPoly(center: Point, size: number): number[] {
   return pts;
 }
 
-/** A connector from A to B: a line that stops at each hex edge, plus an
- *  arrowhead near B (or a one-way bar for BLOCK). */
-function connector(g: Graphics, A: Point, B: Point, r: number, color: number, alpha: number, block: boolean, arch: boolean, width: number): void {
+/** How an edge reads: a one-way track, a gateway you can pass, or a barrier you
+ *  cannot cross. Drives the connector's arrowhead style. */
+type EdgeKind = "track" | "gateway" | "block";
+
+/** Classify a board exit type into its visual kind. */
+function edgeKind(type: string): EdgeKind {
+  if (type === "BLOCK") return "block";
+  if (type === "ARCH") return "gateway";
+  return "track"; // ARROW / ARROWS — the painted directional flow
+}
+
+/**
+ * A connector from A toward B, drawn so DIRECTION is unmistakable.
+ *
+ *   track    solid line + a filled arrowhead AT B's doorstep → you may move here.
+ *   gateway  solid line + a hollow (outlined) arrowhead → a passable gateway.
+ *   block    a stub from A capped by a perpendicular barrier, NO arrowhead →
+ *            this side cannot be entered; not a direction you can take.
+ *
+ * Placing the arrowhead at the destination (not mid-line) means each land's
+ * exits clearly point at where a legion can go next.
+ */
+function connector(g: Graphics, A: Point, B: Point, r: number, color: number, alpha: number, kind: EdgeKind, width: number): void {
   const dx = B.x - A.x, dy = B.y - A.y;
   const len = Math.hypot(dx, dy) || 1;
   const ux = dx / len, uy = dy / len;
-  const a = { x: A.x + ux * r * 0.9, y: A.y + uy * r * 0.9 };
-  const b = { x: B.x - ux * r * 0.9, y: B.y - uy * r * 0.9 };
-  g.moveTo(a.x, a.y).lineTo(b.x, b.y).stroke({ color, width, alpha, cap: "round" });
-  const m = { x: A.x + dx * 0.62, y: A.y + dy * 0.62 };
-  const px = -uy, py = ux, s = r * 0.22;
-  if (block) {
-    g.moveTo(m.x - px * s, m.y - py * s).lineTo(m.x + px * s, m.y + py * s).stroke({ color, width, alpha });
+  const px = -uy, py = ux;
+  const a = { x: A.x + ux * r * 0.92, y: A.y + uy * r * 0.92 };
+  const b = { x: B.x - ux * r * 0.92, y: B.y - uy * r * 0.92 };
+
+  if (kind === "block") {
+    // Stub from A that halts mid-gap, capped by a bold barrier bar.
+    const stop = { x: A.x + ux * (len * 0.46), y: A.y + uy * (len * 0.46) };
+    const s = r * 0.3;
+    g.moveTo(a.x, a.y).lineTo(stop.x, stop.y).stroke({ color, width, alpha, cap: "round" });
+    g.moveTo(stop.x - px * s, stop.y - py * s).lineTo(stop.x + px * s, stop.y + py * s)
+      .stroke({ color, width: width * 1.7, alpha, cap: "round" });
     return;
   }
-  const tip = { x: m.x + ux * s, y: m.y + uy * s };
-  const back = { x: m.x - ux * s * 0.5, y: m.y - uy * s * 0.5 };
-  const poly = [tip.x, tip.y, back.x + px * s * 0.75, back.y + py * s * 0.75, back.x - px * s * 0.75, back.y - py * s * 0.75];
-  if (arch) g.poly(poly).stroke({ color, width: width * 0.6, alpha });
+
+  // Shaft, then an arrowhead seated at B's doorstep pointing inward.
+  g.moveTo(a.x, a.y).lineTo(b.x, b.y).stroke({ color, width, alpha, cap: "round" });
+  const headLen = r * 0.4, headW = r * 0.26;
+  const baseC = { x: b.x - ux * headLen, y: b.y - uy * headLen };
+  const poly = [b.x, b.y, baseC.x + px * headW, baseC.y + py * headW, baseC.x - px * headW, baseC.y - py * headW];
+  if (kind === "gateway") g.poly(poly).stroke({ color, width: Math.max(1.4, width * 0.8), alpha });
   else g.poly(poly).fill({ color, alpha });
 }
 
