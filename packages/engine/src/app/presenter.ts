@@ -229,7 +229,8 @@ export function planBattleClick(view: GameStateView, seat: string | null, sel: S
   const clickedKey = cubeKey(clicked);
   const at = b.combatants.find((c) => !c.slain && c.hex && cubeKey(c.hex) === clickedKey);
 
-  // Deployment: place the next unplaced character on a legal, empty zone hex.
+  // Deployment: place a chosen (or the next unplaced) character on a legal,
+  // empty zone hex. The UI may pre-select WHICH unit via sel.combatant.
   if (path.endsWith("Deployment")) {
     const label = labelAt(b.terrain, clickedKey);
     if (!label || !new Set(deployZoneLabels(b.terrain, side)).has(label)) return {};
@@ -239,9 +240,13 @@ export function planBattleClick(view: GameStateView, seat: string | null, sel: S
     ]);
     if (taken.has(label)) return {};
     const placed = new Set(sel.deploy.map((p) => p.combatantId));
-    const next = b.combatants.find((c) => c.side === side && !placed.has(c.id));
+    // Prefer the explicitly-selected unit (if it is mine and not yet placed);
+    // otherwise fall back to the next unplaced unit so a quick tap still works.
+    const chosen = sel.combatant && b.combatants.find((c) => c.id === sel.combatant && c.side === side && !placed.has(c.id));
+    const next = chosen || b.combatants.find((c) => c.side === side && !placed.has(c.id));
     if (!next) return {};
-    return { select: { deploy: [...sel.deploy, { combatantId: next.id, hex: label }] } };
+    // Clear the picked unit after placing so the next tap advances naturally.
+    return { select: { deploy: [...sel.deploy, { combatantId: next.id, hex: label }], combatant: null } };
   }
 
   // Summon window: clicking an empty hex picks the Angel's landing spot.
@@ -490,7 +495,10 @@ export function reachableLands(view: GameStateView, seat: string, marker: string
   if (!view.fsm.path.endsWith("Movement") || view.turn.movementRoll == null) return [];
   const leg = view.legions[marker];
   if (!leg || leg.ownerId !== seat || leg.moved) return [];
-  return destinationsForRoll(leg.land, view.turn.movementRoll)
+  // Enemy lands may be a destination (engage) but not passed through.
+  const enemyLands = new Set<number>();
+  for (const o of Object.values(view.legions)) if (o.ownerId !== seat) enemyLands.add(o.land);
+  return destinationsForRoll(leg.land, view.turn.movementRoll, (land) => enemyLands.has(land))
     .map((d) => d.destination)
     .filter((d) => !Object.values(view.legions).some((o) => o.ownerId === seat && o.marker !== marker && o.land === d));
 }

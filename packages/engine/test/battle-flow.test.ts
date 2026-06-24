@@ -419,3 +419,137 @@ describe("round-4 defensive muster (§7.5)", () => {
     rejects(s, new ReinforceBattleCommand("B", { creature: "Lion" }), ValidationCode.ILLEGAL_REINFORCE);
   });
 });
+
+// ===========================================================================
+// Round / half-turn flow (Law of Titan §7.4): defender acts first, each round
+// is two half-turns, and the per-phase flags reset correctly.
+// ===========================================================================
+
+describe("battle round & half-turn flow", () => {
+  it("the defender takes the first half-turn; a full round cycles back to the defender", () => {
+    let s = buildBattle({
+      phase: "Maneuver", round: 1, activeSide: "defender",
+      atk: [{ creature: "Titan", label: "A1" }, { creature: "Ogre", label: "B1" }],
+      def: [{ creature: "Centaur", label: "F1" }], // far apart — nobody strikes
+    });
+    assert.equal(s.battle!.activeSide, "defender");
+
+    // Defender half-turn: Maneuver → Strike → Strikeback.
+    s = exec(s, new EndManeuversCommand("B", {})).state;
+    assert.ok(s.fsm.path.endsWith("Round.Strike"));
+    s = exec(s, new EndStrikesCommand("B", {})).state; // defender's strikes done
+    assert.ok(s.fsm.path.endsWith("Round.Strikeback"));
+    s = exec(s, new EndStrikesCommand("A", {})).state; // attacker's strikeback done
+    assert.equal(s.battle!.round, 1, "still round 1 after only the defender half");
+    assert.equal(s.battle!.activeSide, "attacker");
+    assert.ok(s.fsm.path.endsWith("Round.Maneuver"));
+
+    // Attacker half-turn completes the round → back to the defender at round 2.
+    s = exec(s, new EndManeuversCommand("A", {})).state;
+    s = exec(s, new EndStrikesCommand("A", {})).state;
+    s = exec(s, new EndStrikesCommand("B", {})).state;
+    assert.equal(s.battle!.round, 2);
+    assert.equal(s.battle!.activeSide, "defender");
+  });
+
+  it("a character may strike only once per phase; the flag resets when the phase advances", () => {
+    // Plains C3/C4 are adjacent. Defender Lion strikes the attacker Ogre.
+    let s = buildBattle({
+      phase: "Strike", round: 1, activeSide: "defender",
+      atk: [{ creature: "Ogre", label: "C4" }],
+      def: [{ creature: "Lion", label: "C3" }],
+    });
+    // Lion (power 5) rolls five misses so nobody dies.
+    s = exec(s, new StrikeCommand("B", { strikerId: "def-0", targetId: "atk-0" }), scriptedRng([1, 1, 1, 1, 1])).state;
+    assert.ok(s.battle!.combatants.find((c) => c.id === "def-0")!.struckThisPhase);
+    rejects(s, new StrikeCommand("B", { strikerId: "def-0", targetId: "atk-0" }), ValidationCode.ILLEGAL_STRIKE);
+    // Advancing to Strikeback clears the struck flag.
+    s = exec(s, new EndStrikesCommand("B", {})).state;
+    assert.equal(s.battle!.combatants.find((c) => c.id === "def-0")!.struckThisPhase, false);
+  });
+
+  it("a moved character cannot move again until the next round resets the flag", () => {
+    let s = buildBattle({
+      phase: "Maneuver", round: 1, activeSide: "defender",
+      atk: [{ creature: "Ogre", label: "A1" }],
+      def: [{ creature: "Centaur", label: "F1" }],
+    });
+    s = exec(s, new MoveCombatantCommand("B", { combatantId: "def-0", hex: "F2" })).state;
+    assert.ok(s.battle!.combatants.find((c) => c.id === "def-0")!.movedThisPhase);
+    rejects(s, new MoveCombatantCommand("B", { combatantId: "def-0", hex: "E1" }), ValidationCode.ILLEGAL_MANEUVER);
+  });
+
+  it("Tower (§10.2): the defender may not move on the first maneuver, but may from round 2", () => {
+    // Reuse the Plains scaffold but make it a Tower battle (the 27-hex geometry
+    // and labels are shared across maps, so the C-column hexes are valid here).
+    const base = buildBattle({
+      phase: "Maneuver", round: 1, activeSide: "defender",
+      atk: [{ creature: "Ogre", label: "A1" }],
+      def: [{ creature: "Centaur", label: "C2" }],
+    });
+    const s: GameState = { ...base, battle: { ...base.battle!, terrain: "Tower" } };
+    rejects(s, new MoveCombatantCommand("B", { combatantId: "def-0", hex: "C1" }), ValidationCode.ILLEGAL_MANEUVER);
+    // The attacker is free to move on round 1 (only the walled defender is held).
+    // From round 2 the defender may move the very same step.
+    const s2: GameState = { ...s, battle: { ...s.battle!, round: 2 } };
+    const v = new MoveCombatantCommand("B", { combatantId: "def-0", hex: "C1" }).validate(s2);
+    assert.ok(v.ok, !v.ok ? v.failure.message : "");
+  });
+});
+
+// ===========================================================================
+// Battle endings (§8): time-loss, a slain Titan, and a wiped side.
+// ===========================================================================
+
+describe("battle conclusions", () => {
+  it("round 7 ending with defenders still alive is an attacker time-loss", () => {
+    // Strikeback of round 7 with the attacker active → finishing it completes
+    // round 7. Give the attacker a home Titan so it is not also eliminated.
+    let s = buildBattle({
+      phase: "Strikeback", round: 7, activeSide: "attacker",
+      atk: [{ creature: "Ogre", label: "A1" }],
+      def: [{ creature: "Centaur", label: "F1" }],
+      homes: [{ marker: "Black-09", owner: "A", creatures: ["Titan", "Gargoyle"] }],
+    });
+    const { state, events } = exec(s, new EndStrikesCommand("B", {})); // defender ends its strikeback
+    assert.equal(state.battle, null, "battle concluded");
+    assert.ok(!state.legions["Black-01"], "the attacking legion is wiped on a time-loss");
+    assert.ok(state.legions["Red-01"], "the defender's legion survives");
+    assert.equal(state.players.B!.score, 0, "a time-loss scores the defender NOTHING");
+    assert.ok(events.some((e) => e.type === "BattleConcluded" && e.timeLoss));
+  });
+
+  it("a slain Titan ends the battle and eliminates its owner", () => {
+    // Attacker Colossus adjacent to the defender's lone Titan; attacker strikes
+    // in Strikeback (non-active side strikes back) and kills it.
+    let s = buildBattle({
+      phase: "Strikeback", round: 2, activeSide: "defender",
+      atk: [{ creature: "Colossus", label: "C4" }],
+      def: [{ creature: "Titan", label: "C3" }],
+      bScore: 0,
+    });
+    // Colossus power 10 → 10 dice; Titan threshold 6. Force plenty of hits.
+    const big = exec(s, new StrikeCommand("A", { strikerId: "atk-0", targetId: "def-0" }), scriptedRng([6, 6, 6, 6, 6, 6, 6, 6, 6, 6]));
+    s = big.state;
+    assert.ok(s.battle!.combatants.find((c) => c.id === "def-0")!.slain, "Titan slain");
+    const { state, events } = exec(s, new EndStrikesCommand("A", {})); // defender owns the strikeback end
+    assert.equal(state.battle, null);
+    assert.ok(state.players.B!.eliminated, "the Titan's owner is eliminated");
+    assert.ok(events.some((e) => e.type === "PlayerEliminated" && e.playerId === "B"));
+  });
+
+  it("wiping the defender's legion wins the land and scores the slain", () => {
+    let s = buildBattle({
+      phase: "Strikeback", round: 2, activeSide: "defender",
+      atk: [{ creature: "Colossus", label: "C4" }],
+      def: [{ creature: "Centaur", label: "C3" }],
+      homes: [{ marker: "Red-09", owner: "B", creatures: ["Titan"] }], // so B isn't eliminated
+    });
+    s = exec(s, new StrikeCommand("A", { strikerId: "atk-0", targetId: "def-0" }), scriptedRng([6, 6, 6, 6, 6, 6, 6, 6, 6, 6])).state;
+    const { state } = exec(s, new EndStrikesCommand("A", {}));
+    assert.equal(state.battle, null);
+    assert.equal(state.legions["Black-01"]!.land, PLAINS, "winner holds the contested land");
+    assert.equal(state.players.A!.score, pointValue("Centaur"), "scored the slain Centaur");
+    assert.ok(!state.legions["Red-01"], "the wiped legion is removed");
+  });
+});

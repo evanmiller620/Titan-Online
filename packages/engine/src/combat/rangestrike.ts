@@ -7,9 +7,10 @@
  *
  * Rules modelled:
  *  - Dice = floor(power/2) (rangeStrength).
- *  - Range = cube distance + 1 (counting both endpoints). Legal range is 2..4
- *    hexes inclusive; "range 3" means one empty hex between. Range 4 costs −1
- *    skill; >4 illegal.
+ *  - Range = cube distance + 1 (counting both endpoints); "range 3" means one
+ *    empty hex between. Legal range is 2..4 for EVERY rangestriker; the longest
+ *    shot (range 4) costs −1 skill. The Warlock's magic missile also reaches 4
+ *    but ignores the penalty (and LOS/terrain).
  *  - LOS must be clear (battleland los.ts): Trees/Volcano and occupied hexes
  *    block. Warlock magic missile ignores LOS, terrain, and the skill penalty,
  *    and can strike 4 hexes at full skill.
@@ -90,7 +91,9 @@ export function planRangestrike(args: {
   }
 
   const range = rangestrikeRange(args.from, args.to);
-  const maxRange = magicMissile ? 4 : Math.min(4, attackerSkill(args.attacker));
+  // Every rangestriker reaches up to range 4; the longest shot (range 4) costs
+  // −1 skill (applied below). Magic missile also reaches 4, without the penalty.
+  const maxRange = 4;
   if (range < 2 || range > maxRange) {
     return { ok: false, reason: "OUT_OF_RANGE" };
   }
@@ -113,8 +116,9 @@ export function planRangestrike(args: {
     const pen = rangeSkillPenalty(range);
     if (pen) mods = combineMods(mods, { diceDelta: 0, attackerSkillDelta: -pen, defenderSkillDelta: 0, advantage: false });
 
-    // Bramble penalties along the path / on the defender (non-magic only).
-    mods = combineMods(mods, bramblePenalties(args.grid, args.attacker, args.defender, args.from, args.to));
+    // Rough-terrain penalties (Bramble & Drift) along the path / on the
+    // defender (non-magic only).
+    mods = combineMods(mods, roughTerrainPenalties(args.grid, args.attacker, args.defender, args.from, args.to));
   }
 
   const inputs: StrikeInputs = {
@@ -126,9 +130,11 @@ export function planRangestrike(args: {
   return { ok: true, plan: { inputs, range, magicMissile } };
 }
 
-/** −1 skill per intervening bramble hex for a non-native; +1 strike-number if
- *  the defender is a bramble-native sitting in bramble. */
-function bramblePenalties(
+/** Bramble AND Drift behave alike for rangestrikes: a native defender sitting
+ *  in the hazard is harder to hit (+1 strike number), and a non-native loses 1
+ *  skill per intervening hazard hex it must shoot across (per hazard it isn't
+ *  native to). The defender's own hex is not "intervening". */
+function roughTerrainPenalties(
   grid: BattleGrid,
   attacker: CreatureName,
   defender: CreatureName,
@@ -136,22 +142,27 @@ function bramblePenalties(
   to: CubeCoord,
 ): StrikeMods {
   let mods: StrikeMods = NO_MODS;
+  const rough: ReadonlyArray<readonly ["Brambles" | "Drift", "Brambles" | "Drift"]> = [
+    ["Brambles", "Brambles"],
+    ["Drift", "Drift"],
+  ];
   const dHex = hexAt(grid, to);
-  if (dHex?.terrain === "Brambles" && isNativeTo(defender, "Brambles") && !isNativeTo(attacker, "Brambles")) {
-    mods = combineMods(mods, { diceDelta: 0, attackerSkillDelta: 0, defenderSkillDelta: 1, advantage: false });
-  }
-  if (!isNativeTo(attacker, "Brambles")) {
-    // Count intervening bramble hexes on the chosen LOS chain (use the first
-    // clear chain). The defender's hex is not "intervening"; the attacker's
-    // hex bramble has no effect.
-    const [chainA] = cubeLinesThrough(from, to);
-    let count = 0;
-    for (let i = 1; i < chainA.length - 1; i++) {
-      const h = hexAt(grid, chainA[i]!);
-      if (h?.terrain === "Brambles") count += 1;
+  for (const [terrain, hazard] of rough) {
+    if (dHex?.terrain === terrain && isNativeTo(defender, hazard) && !isNativeTo(attacker, hazard)) {
+      mods = combineMods(mods, { diceDelta: 0, attackerSkillDelta: 0, defenderSkillDelta: 1, advantage: false });
     }
-    if (count > 0) mods = combineMods(mods, { diceDelta: 0, attackerSkillDelta: -count, defenderSkillDelta: 0, advantage: false });
   }
+  // Count intervening hazard hexes the attacker is not native to (first clear
+  // LOS chain). Attacker's own hex has no effect.
+  const [chainA] = cubeLinesThrough(from, to);
+  let penalty = 0;
+  for (let i = 1; i < chainA.length - 1; i++) {
+    const h = hexAt(grid, chainA[i]!);
+    if (!h) continue;
+    if (h.terrain === "Brambles" && !isNativeTo(attacker, "Brambles")) penalty += 1;
+    else if (h.terrain === "Drift" && !isNativeTo(attacker, "Drift")) penalty += 1;
+  }
+  if (penalty > 0) mods = combineMods(mods, { diceDelta: 0, attackerSkillDelta: -penalty, defenderSkillDelta: 0, advantage: false });
   return mods;
 }
 

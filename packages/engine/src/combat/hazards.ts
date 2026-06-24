@@ -18,8 +18,9 @@
  *    loses 1 skill striking UP across a wall.
  *  - Volcano: a Dragon adds 2 dice striking from the volcano (diceDelta +2,
  *    advantage).
- *  - Drift: no strike modifier (its effect is per-round damage, handled by the
- *    battle round, not here).
+ *  - Drift: behaves like Bramble for strikes — a native defender in drift is
+ *    harder to hit (defenderSkillDelta +1 vs a non-native), and a non-native
+ *    striking OUT of drift loses 1 skill (attackerSkillDelta −1).
  *
  * "advantage" flags a positional benefit the attacker is using; it gates
  * carry-over. Penalties (losing dice/skill) are not advantages.
@@ -75,9 +76,13 @@ export function meleeStrikeMods(
       mods = combineMods(mods, { diceDelta: 0, attackerSkillDelta: -1, defenderSkillDelta: 0, advantage: false });
     }
   } else if (border === "d") {
+    // Dune hexside (Desert). A Sand-native striking DOWN a dune adds 2 dice; a
+    // non-native fighting ACROSS the loose dune loses a die regardless of
+    // elevation (Default Desert dunes are flat, so the penalty must not be
+    // gated on going uphill or it would never apply).
     if (strikingDown && isNativeTo(attacker, "Sand")) {
       mods = combineMods(mods, { diceDelta: 2, attackerSkillDelta: 0, defenderSkillDelta: 0, advantage: true });
-    } else if (strikingUp && !isNativeTo(attacker, "Sand")) {
+    } else if (!isNativeTo(attacker, "Sand")) {
       mods = combineMods(mods, { diceDelta: -1, attackerSkillDelta: 0, defenderSkillDelta: 0, advantage: false });
     }
   } else if (border === "w") {
@@ -88,15 +93,16 @@ export function meleeStrikeMods(
     }
   }
 
-  // In-hex hazards.
-  // Bramble: native defender harder to hit vs non-native attacker.
-  if (isBramble(dHex.terrain) && isNativeTo(defender, "Brambles") && !isNativeTo(attacker, "Brambles")) {
-    // Harder to hit = higher strike number = +1 to defender's effective skill.
-    mods = combineMods(mods, { diceDelta: 0, attackerSkillDelta: 0, defenderSkillDelta: 1, advantage: false });
-  }
-  // Non-native striking OUT of bramble loses 1 skill.
-  if (isBramble(aHex.terrain) && !isNativeTo(attacker, "Brambles")) {
-    mods = combineMods(mods, { diceDelta: 0, attackerSkillDelta: -1, defenderSkillDelta: 0, advantage: false });
+  // In-hex "rough" hazards — Bramble (Brush/Jungle) and Drift (Tundra) behave
+  // alike for strikes (Hazard Chart): a native defender standing in one is
+  // harder to hit, and a non-native striking OUT of one loses a point of skill.
+  for (const [terrain, hazard] of ROUGH_HAZARDS) {
+    if (dHex.terrain === terrain && isNativeTo(defender, hazard) && !isNativeTo(attacker, hazard)) {
+      mods = combineMods(mods, { diceDelta: 0, attackerSkillDelta: 0, defenderSkillDelta: 1, advantage: false });
+    }
+    if (aHex.terrain === terrain && !isNativeTo(attacker, hazard)) {
+      mods = combineMods(mods, { diceDelta: 0, attackerSkillDelta: -1, defenderSkillDelta: 0, advantage: false });
+    }
   }
   // Volcano: Dragon adds 2 dice striking from it.
   if (aHex.terrain === "Volcano" && attacker === "Dragon") {
@@ -106,9 +112,11 @@ export function meleeStrikeMods(
   return mods;
 }
 
-function isBramble(t: HexTerrain): boolean {
-  return t === "Brambles";
-}
+/** In-hex hazards that slow/snare non-natives and modify their strikes alike. */
+const ROUGH_HAZARDS: ReadonlyArray<readonly [HexTerrain, "Brambles" | "Drift"]> = [
+  ["Brambles", "Brambles"],
+  ["Drift", "Drift"],
+];
 
 /**
  * Carry-over eligibility (§13.4–13.5). Excess hits on a slain primary target

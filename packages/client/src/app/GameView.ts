@@ -13,7 +13,7 @@ import { MasterboardRenderer } from "../render/MasterboardRenderer.ts";
 import { BattlelandRenderer } from "../render/BattlelandRenderer.ts";
 import { Inspector } from "../ui/Inspector.ts";
 import { GameSession } from "../game/session.ts";
-import { planMasterboardClick, planBattleClick, seatActsNow, battleBanner, seatLegions, reachableLands, landSummary, autoAction, NO_SELECTION } from "@titan/engine";
+import { planMasterboardClick, planBattleClick, seatActsNow, battleBanner, seatLegions, reachableLands, landSummary, autoAction, NO_SELECTION, BATTLE_MAPS, deployZoneLabels } from "@titan/engine";
 import { elem, txt, eyebrow, chip, button, input, iconButton, theme, surface } from "../ui/dom.ts";
 import { type as typ } from "../ui/tokens.ts";
 import { helpOverlay } from "../ui/Help.ts";
@@ -66,7 +66,7 @@ export class GameView {
     // Inspector is an OVERLAY drawer — appended after the board so it floats on top.
     root.appendChild(this.inspector.el);
 
-    this.topRow = elem("div", "display:flex;gap:6px;margin-bottom:14px");
+    this.topRow = elem("div", "display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px");
     this.phaseEl = elem("div", "display:flex;align-items:center;gap:4px;margin-bottom:14px");
     this.seatRow = elem("div", "display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px");
     this.bar = elem("div", "display:flex;flex-direction:column;gap:8px");
@@ -189,24 +189,68 @@ export class GameView {
     if (!this.legendEl) return;
     const title = (t: string) => elem("div", `font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:${theme.brass};margin-bottom:2px`, { text: t });
     if (inBattle) {
-      this.legendEl.replaceChildren(
-        title("Battle"),
-        this.legendItem(`width:12px;height:12px;border-radius:50%;background:${theme.accent}`, "your attackers"),
-        this.legendItem(`width:12px;height:12px;border-radius:50%;background:${theme.verdigris}`, "defenders"),
-        this.legendItem(`width:12px;height:12px;border-radius:50%;border:2px solid ${theme.brassBright}`, "selected unit"),
-        elem("div", `margin-top:3px;font-size:10px;color:${theme.dim}`, { text: "tap a hex to move or strike" }),
-      );
+      this.buildBattleLegend(title);
     } else {
       const arrow = (c: string) => `width:0;height:0;border-top:5px solid transparent;border-bottom:5px solid transparent;border-left:10px solid ${c}`;
       this.legendEl.replaceChildren(
-        title("Directions"),
-        this.legendItem(arrow(theme.brassBright), "one-way track →"),
-        this.legendItem(arrow(theme.verdigris), "gateway (pass / stop)"),
-        this.legendItem(`width:4px;height:13px;background:${theme.warn};border-radius:1px`, "blocked — no entry"),
+        title("Connections"),
+        this.legendItem(arrow(theme.brassBright), "triangle — track, move this way"),
+        this.legendItem(`width:11px;height:11px;border-radius:4px;background:${theme.verdigris}`, "rounded square — gateway"),
+        this.legendItem(`width:11px;height:11px;background:${theme.warn}`, "square — forced block"),
         this.legendItem(`width:12px;height:12px;border:2px solid ${theme.verdigris};border-radius:2px`, "reachable now"),
-        elem("div", `margin-top:3px;font-size:10px;color:${theme.dim}`, { text: "hover a land to light its exits · scroll = zoom · drag = pan" }),
+        elem("div", `margin-top:3px;font-size:10px;color:${theme.dim}`, { text: "markers sit on each land's edge · hover for bold exits · scroll/drag to zoom & pan" }),
       );
     }
+  }
+
+  /** Battle legend: the side key plus every hazard / hexside feature actually
+   *  present on THIS battleland, with its movement & combat modifiers. */
+  private buildBattleLegend(title: (t: string) => HTMLElement): void {
+    const terrain = this.session.view()?.battle?.terrain;
+    const map = terrain ? BATTLE_MAPS[terrain] : undefined;
+    const kids: HTMLElement[] = [
+      title(terrain ? `${terrain} battleland` : "Battle"),
+      this.legendItem(`width:12px;height:12px;border-radius:50%;background:${theme.accent}`, "your attackers"),
+      this.legendItem(`width:12px;height:12px;border-radius:50%;background:${theme.verdigris}`, "defenders"),
+    ];
+    if (map) {
+      const hazards = new Set<string>();
+      const borders = new Set<string>();
+      let highGround = false;
+      for (const h of map.hexes) {
+        if (h.terrain !== "Plains") hazards.add(h.terrain);
+        if (h.elevation > 0) highGround = true;
+        for (const b of h.borders) borders.add(b.type);
+      }
+      const rows: HTMLElement[] = [];
+      for (const hz of hazards) { const info = HAZARD_INFO[hz]; if (info) rows.push(this.legendRow(info.color, false, hz, info.effect)); }
+      if (highGround) rows.push(this.legendRow(theme.dim, false, "High ground", "aids down-strikes over slopes & walls"));
+      for (const b of borders) { const info = BORDER_INFO[b]; if (info) rows.push(this.legendRow(info.color, true, info.name, info.effect)); }
+      if (rows.length) {
+        kids.push(elem("div", `margin-top:5px;padding-top:5px;border-top:1px solid ${theme.line};display:flex;flex-direction:column;gap:5px;max-width:250px`, { children: rows }));
+      }
+    }
+    kids.push(elem("div", `margin-top:4px;font-size:10px;color:${theme.dim}`, { text: "tap a hex to move or strike" }));
+    this.legendEl.replaceChildren(...kids);
+  }
+
+  /** One terrain-key row: a colour swatch (square = hazard, bar = hexside) + a
+   *  name and its rules effect. */
+  private legendRow(color: string, isEdge: boolean, name: string, effect: string): HTMLElement {
+    const swatch = isEdge
+      ? `width:13px;height:4px;border-radius:2px;background:${color};margin-top:4px`
+      : `width:11px;height:11px;border-radius:2px;background:${color};margin-top:1px`;
+    return elem("div", "display:flex;gap:7px;align-items:flex-start", {
+      children: [
+        elem("span", `display:inline-block;flex:0 0 auto;${swatch}`),
+        elem("div", "display:flex;flex-direction:column;line-height:1.25", {
+          children: [
+            elem("span", `font-size:11px;font-weight:600;color:${theme.ink}`, { text: name }),
+            elem("span", `font-size:10px;color:${theme.dim}`, { text: effect }),
+          ],
+        }),
+      ],
+    });
   }
 
   private async initBoard(boardEl: HTMLElement): Promise<void> {
@@ -431,12 +475,59 @@ export class GameView {
     }));
   }
 
+  /** Deployment state for the focused seat, or null when not deploying now. */
+  private deployContext(v: GameStateView): { side: string; units: Array<{ id: string; creature: string; placed: boolean }>; available: string[] } | null {
+    const b = v.battle;
+    if (!b || !v.fsm.path.endsWith("Deployment")) return null;
+    if (!seatActsNow(v, this.session.focusedSeat)) return null;
+    const side = v.fsm.path.endsWith("DefenderDeployment") ? "defender" : "attacker";
+    const sel = this.session.getSelection();
+    const placed = new Set(sel.deploy.map((p) => p.combatantId));
+    const pendingHexes = new Set(sel.deploy.map((p) => p.hex));
+    const map = BATTLE_MAPS[b.terrain];
+    const occupied = new Set<string>();
+    if (map) {
+      const byCube = new Map(map.hexes.map((hxd) => [`${hxd.cube.x},${hxd.cube.y},${hxd.cube.z}`, hxd.label]));
+      for (const c of b.combatants) {
+        if (!c.hex) continue;
+        const l = byCube.get(`${c.hex.x},${c.hex.y},${c.hex.z}`);
+        if (l) occupied.add(l);
+      }
+    }
+    const available = deployZoneLabels(b.terrain, side).filter((l) => !pendingHexes.has(l) && !occupied.has(l));
+    const units = b.combatants.filter((c) => c.side === side).map((c) => ({ id: c.id, creature: c.creature, placed: placed.has(c.id) }));
+    return { side, units, available };
+  }
+
+  /** A pick-your-unit deployment tray: tap a unit, then a glowing board hex. */
+  private renderDeployPicker(dc: { units: Array<{ id: string; creature: string; placed: boolean }>; available: string[] }): HTMLElement[] {
+    const selId = this.session.getSelection().combatant;
+    const remaining = dc.units.filter((u) => !u.placed).length;
+    const chips = dc.units.map((u) => chip(u.placed ? `✓ ${u.creature}` : u.creature, {
+      active: !u.placed && u.id === selId,
+      ring: !u.placed && u.id === selId,
+      title: u.placed ? "placed — tap its hex to keep it" : "select, then tap a highlighted hex",
+      onClick: u.placed ? undefined : () => { this.session.select({ combatant: u.id }); this.render(); },
+    }));
+    const placedCount = dc.units.length - remaining;
+    if (placedCount > 0) {
+      chips.push(chip("↺ reset", { title: "clear all placements", onClick: () => { this.session.select({ deploy: [], combatant: null }); this.render(); } }));
+    }
+    return [
+      txt(`Deploy your legion — ${remaining} to place`, theme.brassBright, typ.scale.sm),
+      elem("div", `font-size:11px;color:${theme.dim};margin:-2px 0 2px`, { text: remaining ? "Pick a unit, then tap a glowing hex (or just tap hexes to place in order)." : "All placed — confirm below." }),
+      elem("div", "display:flex;flex-wrap:wrap;gap:5px", { children: chips }),
+    ];
+  }
+
   private renderBar(): void {
     const v = this.session.view();
     const banner = v && v.battle ? battleBanner(v) : null;
     const actions = this.session.actions();
     const kids: HTMLElement[] = [];
     if (banner) kids.push(txt(banner, theme.brassBright, typ.scale.sm));
+    const dc = v ? this.deployContext(v) : null;
+    if (dc) for (const el of this.renderDeployPicker(dc)) kids.push(el);
     if (v && !v.battle && v.fsm.path.endsWith("Movement") && v.turn.movementRoll != null) {
       kids.push(txt(`Rolled: ${v.turn.movementRoll}`, theme.brassBright, typ.scale.lg));
     }
@@ -542,7 +633,8 @@ export class GameView {
       this.board.setVisible(false);
       this.battle?.setVisible(true);
       const sel = this.session.getSelection();
-      this.battle?.render(v, sel.combatant, sel.deploy.map((p) => p.hex), sel.hex);
+      const dc = this.deployContext(v);
+      this.battle?.render(v, sel.combatant, sel.deploy.map((p) => p.hex), sel.hex, dc?.available ?? []);
     } else {
       this.board.setVisible(true);
       this.battle?.setVisible(false);
@@ -554,6 +646,29 @@ export class GameView {
     }
   }
 }
+
+/** In-hex hazard key for the battle legend — swatch colour + rules effect.
+ *  Colours mirror the BattlelandRenderer's HAZARD_TINT. */
+const HAZARD_INFO: Record<string, { color: string; effect: string }> = {
+  Brambles: { color: "#6F7A37", effect: "non-natives stop on entry · +1 to hit a native here" },
+  Sand: { color: "#E2C079", effect: "slows non-native entry" },
+  Bog: { color: "#4C4733", effect: "only natives may enter" },
+  Drift: { color: "#CBD9DF", effect: "slows non-natives · chips non-native non-flyers each round" },
+  Tree: { color: "#2F4A2A", effect: "impassable · blocks line of sight" },
+  Volcano: { color: "#9A3A22", effect: "impassable · a Dragon striking out adds 2 dice" },
+  Tower: { color: "#8C8273", effect: "walled keep · defender deploys inside" },
+  Lake: { color: "#3E6B86", effect: "water" },
+  Stone: { color: "#7C7568", effect: "bare rock" },
+};
+
+/** Hexside feature key for the battle legend. */
+const BORDER_INFO: Record<string, { color: string; name: string; effect: string }> = {
+  w: { color: "#B08D57", name: "Wall", effect: "blocks non-flyers · +1 skill striking down across it" },
+  c: { color: "#15120F", name: "Cliff", effect: "blocks movement across this edge" },
+  s: { color: "#5E7A6B", name: "Slope", effect: "native +1 die down · non-native −1 skill up" },
+  d: { color: "#CBA86B", name: "Dune", effect: "native +2 dice down · non-native −1 die up" },
+  r: { color: "#4E86A6", name: "River", effect: "slows non-flying non-natives" },
+};
 
 /** A "MoveLegion" → "move legion" fallback when a command emits no event. */
 function humanizeType(t: string): string {

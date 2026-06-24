@@ -16,8 +16,9 @@ import {
 import { carryOverAllowed, meleeStrikeMods } from "../src/combat/hazards.ts";
 import { planRangestrike } from "../src/combat/rangestrike.ts";
 import { slayThreshold } from "../src/combat/battle.ts";
-import { indexMap } from "../src/battleland/terrain.ts";
+import { indexMap, type BattleGrid } from "../src/battleland/terrain.ts";
 import { BATTLE_MAPS } from "../src/battleland/maps.data.ts";
+import { cubeDistance, cubeNeighbor } from "../src/hex/cube.ts";
 import { CREATURE_STATS } from "../src/creatures/stats.data.ts";
 import { scriptedRng } from "../src/core/rng/Rng.ts";
 import type { GameState, Combatant } from "../src/state/GameState.ts";
@@ -236,42 +237,70 @@ describe("rangestrike", () => {
     assert.ok(warlockVsTitan.ok); // magic missile pierces Lord immunity
   });
 
-  it("uses half power for dice and applies the range-4 skill penalty", () => {
-    // Dragon power 9 → 4 dice. Pick hexes at range 4 (distance 3).
-    const a = hexByLabel("A1");
-    // Find a hex at cube distance 3 in a straight line for a clean range-4.
-    const far = grid.map.hexes.find((h) =>
-      Math.max(
-        Math.abs(h.cube.x - a.x), Math.abs(h.cube.y - a.y), Math.abs(h.cube.z - a.z),
-      ) === 3);
-    if (far) {
-      const r = planRangestrike({
-        grid, attacker: "Dragon", defender: "Lion",
-        from: a, to: far.cube,
-        attackerInContact: false, isOccupied: () => false, defenderScore: 0, attackerScore: 0,
-      });
-      if (r.ok) {
-        assert.equal(r.plan.inputs.attackerPower, 4); // floor(9/2)
-        assert.equal(r.plan.range, 4);
-        assert.equal(r.plan.inputs.mods.attackerSkillDelta, -1); // range-4 penalty
-      }
+  // A board hex at exactly cube distance `d` from `a`. For valid cubes,
+  // max(|dx|,|dy|,|dz|) equals the cube distance. Throws so the test can never
+  // silently no-op (the previous version's `if (far)`/`if (r.ok)` guards did,
+  // hiding that a skill-3 Dragon can't actually reach range 4).
+  const hexAtDistance = (a: { x: number; y: number; z: number }, d: number) => {
+    const h = grid.map.hexes.find((x) =>
+      Math.max(Math.abs(x.cube.x - a.x), Math.abs(x.cube.y - a.y), Math.abs(x.cube.z - a.z)) === d);
+    assert.ok(h, `expected a Plains hex at cube distance ${d}`);
+    return h!.cube;
+  };
+
+  it("a skill-4 rangestriker reaches range 4 at half power with the −1 penalty", () => {
+    // Ranger: skill 4, power 4 → floor(4/2)=2 dice. Range 4 == cube distance 3.
+    const r = planRangestrike({
+      grid, attacker: "Ranger", defender: "Lion",
+      from: hexByLabel("A1"), to: hexAtDistance(hexByLabel("A1"), 3),
+      attackerInContact: false, isOccupied: () => false, defenderScore: 0, attackerScore: 0,
+    });
+    assert.ok(r.ok, !r.ok ? `rejected: ${r.reason}` : "");
+    if (r.ok) {
+      assert.equal(r.plan.range, 4);
+      assert.equal(r.plan.inputs.attackerPower, 2); // floor(4/2)
+      assert.equal(r.plan.inputs.mods.attackerSkillDelta, -1); // range-4 penalty
     }
   });
 
-  it("Warlock magic missile ignores the range-4 penalty", () => {
-    const a = hexByLabel("A1");
-    const far = grid.map.hexes.find((h) =>
-      Math.max(
-        Math.abs(h.cube.x - a.x), Math.abs(h.cube.y - a.y), Math.abs(h.cube.z - a.z),
-      ) === 3);
-    if (far) {
-      const r = planRangestrike({
-        grid, attacker: "Warlock", defender: "Lion",
-        from: a, to: far.cube,
-        attackerInContact: false, isOccupied: () => false, defenderScore: 0, attackerScore: 0,
-      });
-      assert.ok(r.ok && r.plan.magicMissile && r.plan.inputs.mods.attackerSkillDelta === 0);
+  it("every rangestriker reaches range 4: a skill-3 Dragon ranges 4 (with the −1 penalty) and 3 (clean)", () => {
+    const dragonR4 = planRangestrike({
+      grid, attacker: "Dragon", defender: "Lion",
+      from: hexByLabel("A1"), to: hexAtDistance(hexByLabel("A1"), 3), // range 4
+      attackerInContact: false, isOccupied: () => false, defenderScore: 0, attackerScore: 0,
+    });
+    assert.ok(dragonR4.ok, !dragonR4.ok ? `rejected: ${dragonR4.reason}` : "");
+    if (dragonR4.ok) {
+      assert.equal(dragonR4.plan.range, 4);
+      assert.equal(dragonR4.plan.inputs.attackerPower, 4); // floor(9/2)
+      assert.equal(dragonR4.plan.inputs.mods.attackerSkillDelta, -1); // range-4 penalty
     }
+    const dragonR3 = planRangestrike({
+      grid, attacker: "Dragon", defender: "Lion",
+      from: hexByLabel("A1"), to: hexAtDistance(hexByLabel("A1"), 2), // range 3
+      attackerInContact: false, isOccupied: () => false, defenderScore: 0, attackerScore: 0,
+    });
+    assert.ok(dragonR3.ok, !dragonR3.ok ? `rejected: ${dragonR3.reason}` : "");
+    if (dragonR3.ok) {
+      assert.equal(dragonR3.plan.range, 3);
+      assert.equal(dragonR3.plan.inputs.mods.attackerSkillDelta, 0); // no penalty below range 4
+    }
+    // Range 5 (cube distance 4) is still out of reach for everyone.
+    const tooFar = planRangestrike({
+      grid, attacker: "Dragon", defender: "Lion",
+      from: hexByLabel("A1"), to: hexAtDistance(hexByLabel("A1"), 4),
+      attackerInContact: false, isOccupied: () => false, defenderScore: 0, attackerScore: 0,
+    });
+    assert.ok(!tooFar.ok && tooFar.reason === "OUT_OF_RANGE");
+  });
+
+  it("Warlock magic missile reaches range 4, no penalty, ignoring blocked LOS", () => {
+    const r = planRangestrike({
+      grid, attacker: "Warlock", defender: "Lion",
+      from: hexByLabel("A1"), to: hexAtDistance(hexByLabel("A1"), 3),
+      attackerInContact: false, isOccupied: () => true /* would block a normal LOS */, defenderScore: 0, attackerScore: 0,
+    });
+    assert.ok(r.ok && r.plan.magicMissile && r.plan.inputs.mods.attackerSkillDelta === 0);
   });
 });
 
@@ -377,5 +406,130 @@ describe("StrikeCommand integration", () => {
     const own = new StrikeCommand("B", { strikerId: "def-1", targetId: "def-2" });
     const v1 = own.validate(s);
     assert.ok(!v1.ok && v1.failure.code === ValidationCode.ILLEGAL_STRIKE);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Hazard strike modifiers across the real battlemaps (Hazard Chart, §13.5)
+// ---------------------------------------------------------------------------
+
+/** Find an adjacent hex pair sharing a border of `type`. With `elevated`, the
+ *  pair must also differ in elevation; `hi` is the higher hex. */
+function borderPair(grid: BattleGrid, type: string, elevated: boolean): { hi: { x: number; y: number; z: number }; lo: { x: number; y: number; z: number } } | null {
+  for (const a of grid.map.hexes) {
+    for (const bd of a.borders) {
+      if (bd.type !== type) continue;
+      const nb = cubeNeighbor(a.cube, bd.dir);
+      const b = grid.map.hexes.find((h) => h.cube.x === nb.x && h.cube.y === nb.y && h.cube.z === nb.z);
+      if (!b) continue;
+      if (elevated && a.elevation === b.elevation) continue;
+      const [hi, lo] = a.elevation >= b.elevation ? [a, b] : [b, a];
+      return { hi: hi.cube, lo: lo.cube };
+    }
+  }
+  return null;
+}
+
+describe("hazard strike modifiers (Hazard Chart)", () => {
+  it("slope: a native adds a die striking DOWN; a non-native loses skill striking UP", () => {
+    const grid = indexMap(BATTLE_MAPS.Hills!);
+    const pair = borderPair(grid, "s", true);
+    assert.ok(pair, "Hills should have an elevated slope pair");
+    if (!pair) return;
+    // Lion is slope-native; Centaur is not.
+    const down = meleeStrikeMods(grid, "Lion", "Centaur", pair.hi, pair.lo);
+    assert.equal(down.diceDelta, 1);
+    assert.ok(down.advantage);
+    const up = meleeStrikeMods(grid, "Centaur", "Lion", pair.lo, pair.hi);
+    assert.equal(up.attackerSkillDelta, -1);
+    assert.ok(!up.advantage);
+  });
+
+  it("wall: anyone gains skill striking DOWN across it, loses skill striking UP", () => {
+    const grid = indexMap(BATTLE_MAPS.Tower!);
+    const pair = borderPair(grid, "w", true);
+    assert.ok(pair, "Tower should have an elevated wall pair");
+    if (!pair) return;
+    const down = meleeStrikeMods(grid, "Ogre", "Centaur", pair.hi, pair.lo);
+    assert.equal(down.attackerSkillDelta, 1);
+    assert.ok(down.advantage);
+    const up = meleeStrikeMods(grid, "Centaur", "Ogre", pair.lo, pair.hi);
+    assert.equal(up.attackerSkillDelta, -1);
+  });
+
+  it("volcano: the Dragon's +2 dice stack on top of any slope bonus", () => {
+    const grid = indexMap(BATTLE_MAPS.Mountains!);
+    const volcano = grid.map.hexes.find((h) => h.terrain === "Volcano");
+    assert.ok(volcano, "Mountains has a Volcano hex");
+    if (!volcano) return;
+    const neighbor = grid.map.hexes.find((h) => cubeDistance(h.cube, volcano.cube) === 1 && h.terrain !== "Volcano");
+    assert.ok(neighbor);
+    if (!neighbor) return;
+    // Dragon is volcano- AND slope-native; from the volcano its dice bonus is at
+    // least the +2 volcano (plus any +1 for striking down a slope).
+    const dragon = meleeStrikeMods(grid, "Dragon", "Centaur", volcano.cube, neighbor.cube);
+    assert.ok(dragon.diceDelta >= 2 && dragon.advantage, `expected ≥2 dice, got ${dragon.diceDelta}`);
+    // A non-Dragon native to slope (Ogre) gets the slope bonus but NOT the +2.
+    const ogre = meleeStrikeMods(grid, "Ogre", "Centaur", volcano.cube, neighbor.cube);
+    assert.equal(dragon.diceDelta - ogre.diceDelta, 2, "the +2 is the Dragon-only volcano bonus");
+  });
+
+  it("bramble: a native defender is harder to hit; a non-native striking OUT loses skill", () => {
+    const grid = indexMap(BATTLE_MAPS.Brush!);
+    const bramble = grid.map.hexes.find((h) => h.terrain === "Brambles");
+    assert.ok(bramble);
+    if (!bramble) return;
+    const open = grid.map.hexes.find((h) => cubeDistance(h.cube, bramble.cube) === 1 && h.terrain === "Plains");
+    assert.ok(open);
+    if (!open) return;
+    // Non-native Centaur striking a bramble-native Gargoyle defending in bramble.
+    const intoBramble = meleeStrikeMods(grid, "Centaur", "Gargoyle", open.cube, bramble.cube);
+    assert.equal(intoBramble.defenderSkillDelta, 1, "native defender harder to hit");
+    // Non-native Centaur striking OUT of bramble loses 1 skill.
+    const outOfBramble = meleeStrikeMods(grid, "Centaur", "Lion", bramble.cube, open.cube);
+    assert.equal(outOfBramble.attackerSkillDelta, -1);
+    // A bramble-native (Gargoyle) striking out has no penalty.
+    const nativeOut = meleeStrikeMods(grid, "Gargoyle", "Lion", bramble.cube, open.cube);
+    assert.equal(nativeOut.attackerSkillDelta, 0);
+  });
+
+  it("drift behaves like bramble: native defender harder to hit, non-native striking out loses skill", () => {
+    const grid = indexMap(BATTLE_MAPS.Tundra!);
+    let drift: typeof grid.map.hexes[number] | undefined;
+    let open: typeof grid.map.hexes[number] | undefined;
+    for (const h of grid.map.hexes) {
+      if (h.terrain !== "Drift") continue;
+      const nb = grid.map.hexes.find((x) => x.terrain === "Plains" && cubeDistance(x.cube, h.cube) === 1);
+      if (nb) { drift = h; open = nb; break; }
+    }
+    assert.ok(drift && open, "Tundra should have a drift hex next to open ground");
+    if (!drift || !open) return;
+    // Troll is Drift-native; Centaur is not.
+    const intoDrift = meleeStrikeMods(grid, "Centaur", "Troll", open.cube, drift.cube);
+    assert.equal(intoDrift.defenderSkillDelta, 1, "native defender in drift is harder to hit");
+    const outOfDrift = meleeStrikeMods(grid, "Centaur", "Lion", drift.cube, open.cube);
+    assert.equal(outOfDrift.attackerSkillDelta, -1, "non-native striking out of drift loses skill");
+    const nativeOut = meleeStrikeMods(grid, "Troll", "Lion", drift.cube, open.cube);
+    assert.equal(nativeOut.attackerSkillDelta, 0, "a drift-native is unhindered");
+  });
+
+  it("dune: a non-native loses a die fighting across it, even on flat Desert", () => {
+    const grid = indexMap(BATTLE_MAPS.Desert!);
+    const pair = borderPair(grid, "d", false); // any dune hexside (Default dunes are flat)
+    assert.ok(pair, "Desert should have a dune hexside");
+    if (!pair) return;
+    const nonNative = meleeStrikeMods(grid, "Centaur", "Lion", pair.hi, pair.lo);
+    assert.equal(nonNative.diceDelta, -1, "non-native loses a die across a dune");
+    // A Sand-native (Lion) crosses freely: no penalty on flat ground.
+    const native = meleeStrikeMods(grid, "Lion", "Centaur", pair.lo, pair.hi);
+    assert.ok(native.diceDelta >= 0, "a Sand-native is not penalised by a dune");
+  });
+
+  it("open ground has no strike modifiers", () => {
+    const grid = indexMap(BATTLE_MAPS.Plains!);
+    const a = grid.map.hexes.find((h) => h.label === "C3")!;
+    const b = grid.map.hexes.find((h) => cubeDistance(h.cube, a.cube) === 1)!;
+    const mods = meleeStrikeMods(grid, "Ogre", "Lion", a.cube, b.cube);
+    assert.deepEqual({ d: mods.diceDelta, a: mods.attackerSkillDelta, df: mods.defenderSkillDelta }, { d: 0, a: 0, df: 0 });
   });
 });

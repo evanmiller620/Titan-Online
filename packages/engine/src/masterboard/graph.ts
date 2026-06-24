@@ -6,14 +6,15 @@
  * and the no-backtracking rule — never by cube adjacency. This module turns
  * the static board data into the queries the movement algorithm needs.
  *
- * Edge model: each directed edge (from → to) carries the exit's type. An edge
- * is TRAVERSABLE for a step if the destination may be ENTERED across it:
- *   - ARROWS / ARROW / ARCH: enterable
- *   - BLOCK: NOT enterable from this side. (A BLOCK exit means you may leave
- *     the source toward `to`, but the painted block forbids ENTERING `to`
- *     across that side. In the Default map every BLOCK guards a Tower-ring
- *     land against entry from the outer track, funneling legions the long
- *     way around — the strategic "you can't shortcut into the tower ring".)
+ * Edge model: each directed edge (from → to) carries the exit's type.
+ *   - ARROWS / ARROW / ARCH: normal mid-move steps (enterable).
+ *   - BLOCK: a FORCED EXIT, not a barrier. A block binds only the land a legion
+ *     is SITTING ON at the start of its move: such a legion must make its FIRST
+ *     step across the block. Mid-move a block is inert, so it is not a normal
+ *     traversal step — `isEnterable` reports false for it and the movement walker
+ *     (movement.ts) applies the forced-first-step directly. In the Default map
+ *     the six summit lands drop out via a block, and several outer lands are
+ *     pushed into the Tower ring.
  *
  * The no-backtracking rule needs the immediately-previous land, so the
  * movement walker (movement.ts) threads the visited path and refuses to step
@@ -34,16 +35,19 @@ export interface MasterEdge {
   readonly type: ExitType;
 }
 
-/** Can a legion ENTER `to` when crossing an edge of this type? */
+/** Can a legion ENTER `to` as a NORMAL (mid-move) step across this edge? Blocks
+ *  are excluded here: they are forced-first-step exits, applied by the walker. */
 export function isEnterable(type: ExitType): boolean {
   return type !== "BLOCK";
 }
 
 /** Can a legion STOP in a land it reaches by crossing an edge of this type?
- *  All non-blocked entries allow stopping; the *continue-through* obligation
- *  (triple-arrow flow) is handled by the walker, not here. */
-export function canStopVia(type: ExitType): boolean {
-  return type !== "BLOCK";
+ *  Yes for every type — a legion may always halt on a land it legally reached
+ *  (including a block forced-exit destination). The *continue-through*
+ *  obligations (triple-arrow flow, block forced-exit) constrain the NEXT step,
+ *  never the right to stop; they are enforced by the walker, not here. */
+export function canStopVia(_type: ExitType): boolean {
+  return true;
 }
 
 /** Outgoing edges of a land, in board order. */

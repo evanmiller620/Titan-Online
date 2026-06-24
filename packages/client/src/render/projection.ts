@@ -170,7 +170,8 @@ export function fitColRowLayout(cells: readonly GridCell[], width: number, heigh
   }
   const spanC = (maxC - minC) || 1;
   const spanR = (maxR - minR) || 1;
-  const STEP = 2.08; // centre-to-centre in hex radii — ~0.08·r seam past the 2·r width
+  const STEP = 2.16; // centre-to-centre in hex radii — larger, more readable hexes;
+  //                    arrows draw on top so they stay visible despite the tighter seam.
   // Largest radius that fits each axis (board spans spanC·STEP·r + 2r wide,
   // spanR·STEP·r + √3·r tall), then take the binding one.
   const sizeW = (width - 2 * margin) / (spanC * STEP + 2);

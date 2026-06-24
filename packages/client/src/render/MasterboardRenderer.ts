@@ -172,10 +172,7 @@ export class MasterboardRenderer {
     const r = this.cellRadius();
     const highlighting = highlightLands.size > 0;
 
-    // 1) Connectors first, so hexes sit on top of the tracks.
-    this.drawConnectors(r, highlighting ? highlightLands : null, selectedLand);
-
-    // 2) Reachable halos behind the hexes.
+    // 1) Reachable halos behind everything.
     if (highlighting) {
       const halos = new Graphics();
       for (const id of highlightLands) {
@@ -185,7 +182,8 @@ export class MasterboardRenderer {
       this.base.addChild(halos);
     }
 
-    // 3) Land hexes + labels.
+    // 2) Land hex bodies (fills + rims) — drawn BEFORE the connectors so the
+    //    directional arrows sit ON TOP and are never hidden behind a node.
     for (const land of MASTER_LANDS) {
       const c = this.posById.get(land.id)!;
       const fill = hex(terrainColor[land.terrain] ?? terrainColor.Plains!);
@@ -203,7 +201,21 @@ export class MasterboardRenderer {
           alpha: dim ? 0.5 : 1,
         });
       this.base.addChild(g);
+    }
 
+    // 3) Small per-hexside direction markers — an always-on, calm map of how the
+    //    wheel connects, like the printed Titan board: a TRIANGLE means "track,
+    //    move this way", a ROUNDED SQUARE is a gateway/cross-link, a SQUARE is a
+    //    forced block. Hovering a land still pops bold arrows for detail.
+    this.drawEdgeMarkers(r, highlighting, selectedLand, highlightLands);
+
+    // 4) Labels + number pills last, so they stay crisp above the arrows.
+    for (const land of MASTER_LANDS) {
+      const c = this.posById.get(land.id)!;
+      const fill = hex(terrainColor[land.terrain] ?? terrainColor.Plains!);
+      const isSel = land.id === selectedLand;
+      const isTarget = highlightLands.has(land.id);
+      const dim = highlighting && !isTarget && !isSel;
       this.drawLabel(land.terrain, land.id, c, r, fill, dim);
     }
 
@@ -229,24 +241,32 @@ export class MasterboardRenderer {
     this.renderOverlay(r); // keep hover highlight in sync after a rebuild
   }
 
-  /** Colour-coded directional connectors for every legal exit. When a legion is
-   *  selected (movement), only its land's connectors stay bright so the routes
-   *  open to it read clearly; otherwise the whole wheel's flow is visible. */
-  private drawConnectors(r: number, reachable: ReadonlySet<number> | null, selected: number | null): void {
+  /** Always-on per-hexside direction markers (the printed-board flow key): each
+   *  exit is a small symbol on the rim of its land, offset to the RIGHT of travel
+   *  (Titan convention) so opposing one-ways never collide. Shape encodes type;
+   *  a selected legion's land stays bold while the rest dim. */
+  private drawEdgeMarkers(r: number, highlighting: boolean, selectedLand: number | null, highlight: ReadonlySet<number>): void {
     const g = new Graphics();
-    const focusMode = reachable !== null; // a legion is selected
     for (const land of MASTER_LANDS) {
       const A = this.posById.get(land.id);
       if (!A) continue;
-      const focal = !focusMode || selected === land.id;
+      const isSel = land.id === selectedLand;
+      const dim = highlighting && !isSel && !highlight.has(land.id);
       for (const ex of land.exits) {
         const B = this.posById.get(ex.to);
         if (!B) continue;
         const kind = edgeKind(ex.type);
         const color = hex(kind === "block" ? palette.alarm : kind === "gateway" ? palette.verdigris : palette.brassBright);
-        const base = focusMode ? (focal ? 0.92 : 0.1) : 0.5;
-        const alpha = kind === "block" ? base * 0.7 : base;
-        connector(g, A, B, r, color, alpha, kind, focal ? 2.4 : 1.7);
+        const dx = B.x - A.x, dy = B.y - A.y;
+        const len = Math.hypot(dx, dy) || 1;
+        const ux = dx / len, uy = dy / len;
+        const rx = uy, ry = -ux; // right-of-travel (screen y-down)
+        const along = r * 0.72, off = r * 0.22;
+        const mx = A.x + ux * along + rx * off;
+        const my = A.y + uy * along + ry * off;
+        const sz = r * (isSel ? 0.24 : 0.19);
+        const alpha = dim ? 0.16 : isSel ? 1 : 0.9;
+        drawMarker(g, mx, my, ux, uy, kind, color, alpha, sz);
       }
     }
     this.base.addChild(g);
@@ -260,24 +280,26 @@ export class MasterboardRenderer {
     const name = new Text({
       text: terrain.toUpperCase(),
       style: {
-        fontFamily: typ.body, fontSize: Math.max(9, Math.round(r * 0.32)), fontWeight: "700",
-        letterSpacing: 0.5, fill: hex(inkName),
-        stroke: { color: hex(halo), width: Math.max(1.5, r * 0.06) },
+        fontFamily: typ.body, fontSize: Math.max(10, Math.round(r * 0.34)), fontWeight: "700",
+        letterSpacing: 0.6, fill: hex(inkName),
+        stroke: { color: hex(halo), width: Math.max(2, r * 0.085) },
       },
     });
     name.anchor.set(0.5);
     name.x = c.x;
-    name.y = c.y + r * 0.04;
-    name.alpha = dim ? 0.4 : 1;
+    name.y = c.y + r * 0.08;
+    name.alpha = dim ? 0.35 : 1;
     this.base.addChild(name);
 
     // Number pill at the top of the hex — dark chip, light text, always legible.
-    const fs = Math.max(8, Math.round(r * 0.26));
-    const num = new Text({ text: String(id), style: { fontFamily: typ.mono, fontSize: fs, fontWeight: "600", fill: hex(INK_LIGHT) } });
+    const fs = Math.max(9, Math.round(r * 0.28));
+    const num = new Text({ text: String(id), style: { fontFamily: typ.mono, fontSize: fs, fontWeight: "700", fill: hex(INK_LIGHT) } });
     num.anchor.set(0.5);
-    const pw = num.width + r * 0.28, ph = fs + r * 0.14, py = c.y - r * 0.52;
+    const pw = num.width + r * 0.32, ph = fs + r * 0.16, py = c.y - r * 0.52;
     const pill = new Graphics();
-    pill.roundRect(c.x - pw / 2, py - ph / 2, pw, ph, ph / 2).fill({ color: hex("#15120F"), alpha: dim ? 0.35 : 0.82 });
+    pill.roundRect(c.x - pw / 2, py - ph / 2, pw, ph, ph / 2)
+      .fill({ color: hex("#15120F"), alpha: dim ? 0.35 : 0.9 })
+      .stroke({ color: hex(palette.brass), width: 1, alpha: dim ? 0.2 : 0.6 });
     pill.alpha = dim ? 0.5 : 1;
     num.x = c.x; num.y = py; num.alpha = dim ? 0.5 : 1;
     this.base.addChild(pill);
@@ -307,9 +329,9 @@ export class MasterboardRenderer {
       const kind = edgeKind(ex.type);
       const color = hex(kind === "block" ? palette.alarm : kind === "gateway" ? palette.verdigris : palette.brassBright);
       connector(g, A, B, r, color, 0.98, kind, 3.4);
-      if (kind !== "block") {
-        g.poly(hexPoly(B, r + 2)).stroke({ color, width: 2.4, alpha: 0.9 });
-      }
+      // Ring every reachable destination — including a block (a forced exit you
+      // must take when starting here) — so "where can I go" reads at a glance.
+      g.poly(hexPoly(B, r + 2)).stroke({ color, width: 2.4, alpha: 0.9 });
     }
     // Ring on the hovered land.
     g.poly(hexPoly(A, r + 3)).stroke({ color: hex(palette.brassBright), width: 3.5, alpha: 0.98 });
@@ -366,8 +388,38 @@ function hexPoly(center: Point, size: number): number[] {
   return pts;
 }
 
-/** How an edge reads: a one-way track, a gateway you can pass, or a barrier you
- *  cannot cross. Drives the connector's arrowhead style. */
+/** A small hexside direction marker (printed-board flow key):
+ *   track   → filled TRIANGLE pointing outward ("move this way")
+ *   gateway → ROUNDED SQUARE ("a gateway / cross-link")
+ *   block   → SQUARE ("a forced one-way block")
+ * Each gets a dark halo so it stays legible over any terrain tint. */
+function drawMarker(g: Graphics, x: number, y: number, ux: number, uy: number, kind: EdgeKind, color: number, alpha: number, sz: number): void {
+  const px = -uy, py = ux;
+  const halo = hex("#15120F");
+  const haloA = Math.min(1, alpha * 1.05);
+  if (kind === "track") {
+    const tip = { x: x + ux * sz, y: y + uy * sz };
+    const back = { x: x - ux * sz * 0.5, y: y - uy * sz * 0.5 };
+    const w = sz * 0.78;
+    const tri = (pad: number): number[] => [
+      tip.x + ux * pad, tip.y + uy * pad,
+      back.x + px * (w + pad), back.y + py * (w + pad),
+      back.x - px * (w + pad), back.y - py * (w + pad),
+    ];
+    g.poly(tri(sz * 0.22)).fill({ color: halo, alpha: haloA });
+    g.poly(tri(0)).fill({ color, alpha });
+  } else if (kind === "gateway") {
+    const s = sz * 0.82;
+    g.roundRect(x - s - 1.2, y - s - 1.2, (s + 1.2) * 2, (s + 1.2) * 2, s * 0.7).fill({ color: halo, alpha: haloA });
+    g.roundRect(x - s, y - s, s * 2, s * 2, s * 0.6).fill({ color, alpha });
+  } else {
+    const s = sz * 0.74;
+    g.rect(x - s - 1.2, y - s - 1.2, (s + 1.2) * 2, (s + 1.2) * 2).fill({ color: halo, alpha: haloA });
+    g.rect(x - s, y - s, s * 2, s * 2).fill({ color, alpha });
+  }
+}
+
+/** How an edge reads: a one-way track, a passable gateway, or a forced exit. */
 type EdgeKind = "track" | "gateway" | "block";
 
 /** Classify a board exit type into its visual kind. */
@@ -382,8 +434,8 @@ function edgeKind(type: string): EdgeKind {
  *
  *   track    solid line + a filled arrowhead AT B's doorstep → you may move here.
  *   gateway  solid line + a hollow (outlined) arrowhead → a passable gateway.
- *   block    a stub from A capped by a perpendicular barrier, NO arrowhead →
- *            this side cannot be entered; not a direction you can take.
+ *   block    solid line + filled arrowhead + a barred "gate" at the SOURCE → a
+ *            FORCED exit: a legion beginning its move on A must leave this way.
  *
  * Placing the arrowhead at the destination (not mid-line) means each land's
  * exits clearly point at where a legion can go next.
@@ -393,26 +445,30 @@ function connector(g: Graphics, A: Point, B: Point, r: number, color: number, al
   const len = Math.hypot(dx, dy) || 1;
   const ux = dx / len, uy = dy / len;
   const px = -uy, py = ux;
-  const a = { x: A.x + ux * r * 0.92, y: A.y + uy * r * 0.92 };
-  const b = { x: B.x - ux * r * 0.92, y: B.y - uy * r * 0.92 };
+  const a = { x: A.x + ux * r * 0.98, y: A.y + uy * r * 0.98 };
+  const b = { x: B.x - ux * r * 0.86, y: B.y - uy * r * 0.86 }; // tip just inside B's edge
+
+  // A thin connecting shaft (faint — it just ties the two lands together).
+  g.moveTo(a.x, a.y).lineTo(b.x, b.y).stroke({ color, width, alpha: alpha * 0.35, cap: "round" });
+
+  // The arrowhead carries the direction, so make it BOLD and give it a dark halo
+  // so it stays legible over any terrain tint. Tip sits at B's doorstep.
+  const headLen = r * 0.46, headW = r * 0.32;
+  const baseC = { x: b.x - ux * headLen, y: b.y - uy * headLen };
+  const tri = (wpad: number, tipExtend: number): number[] => [
+    b.x + ux * tipExtend, b.y + uy * tipExtend,
+    baseC.x + px * (headW + wpad), baseC.y + py * (headW + wpad),
+    baseC.x - px * (headW + wpad), baseC.y - py * (headW + wpad),
+  ];
+  g.poly(tri(r * 0.07, r * 0.05)).fill({ color: hex("#15120F"), alpha: Math.min(1, alpha * 1.1) }); // halo
+  g.poly(tri(0, 0)).fill({ color, alpha });
 
   if (kind === "block") {
-    // Stub from A that halts mid-gap, capped by a bold barrier bar.
-    const stop = { x: A.x + ux * (len * 0.46), y: A.y + uy * (len * 0.46) };
-    const s = r * 0.3;
-    g.moveTo(a.x, a.y).lineTo(stop.x, stop.y).stroke({ color, width, alpha, cap: "round" });
-    g.moveTo(stop.x - px * s, stop.y - py * s).lineTo(stop.x + px * s, stop.y + py * s)
-      .stroke({ color, width: width * 1.7, alpha, cap: "round" });
-    return;
+    // Forced exit: a bar across the source mouth marking the move as mandatory.
+    const s = r * 0.28;
+    g.moveTo(a.x - px * s, a.y - py * s).lineTo(a.x + px * s, a.y + py * s)
+      .stroke({ color, width: width * 1.8, alpha, cap: "round" });
   }
-
-  // Shaft, then an arrowhead seated at B's doorstep pointing inward.
-  g.moveTo(a.x, a.y).lineTo(b.x, b.y).stroke({ color, width, alpha, cap: "round" });
-  const headLen = r * 0.4, headW = r * 0.26;
-  const baseC = { x: b.x - ux * headLen, y: b.y - uy * headLen };
-  const poly = [b.x, b.y, baseC.x + px * headW, baseC.y + py * headW, baseC.x - px * headW, baseC.y - py * headW];
-  if (kind === "gateway") g.poly(poly).stroke({ color, width: Math.max(1.4, width * 0.8), alpha });
-  else g.poly(poly).fill({ color, alpha });
 }
 
 /** The i-th of n seals fanned in an arc below the land centre. */

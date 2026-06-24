@@ -316,6 +316,12 @@ export class MoveCombatantCommand extends BaseCommand<MoveCombatantPayload> {
     const owner = actor === "attacker" ? battle.attackerPlayerId : battle.defenderPlayerId;
     if (this.playerId !== owner) return invalid(ValidationCode.NOT_ACTIVE_PLAYER, "not your maneuver");
 
+    // Tower (§10.2): the defender is deployed inside the walled centre and may
+    // NOT move on the first Maneuver phase (round 1 — the defender's first turn).
+    if (battle.terrain === "Tower" && actor === "defender" && battle.round === 1) {
+      return invalid(ValidationCode.ILLEGAL_MANEUVER, "the Tower defender may not move on the first maneuver");
+    }
+
     const c = battle.combatants.find((x) => x.id === this.payload.combatantId);
     if (!c) return invalid(ValidationCode.UNKNOWN_COMBATANT, "no such combatant");
     if (c.side !== actor) return invalid(ValidationCode.ILLEGAL_MANEUVER, "that is not your character");

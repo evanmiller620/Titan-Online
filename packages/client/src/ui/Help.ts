@@ -44,8 +44,16 @@ const SECTIONS: readonly Section[] = [
   {
     title: "Moving and the rings",
     blocks: [
-      "After rolling, select a legion to light up its legal destinations (green halos). The board’s connector lines are the tracks: brass arrows are the normal one-way flow around the three rings; dashed lines are the inner-ring gateways. Two lands with NO line between them are not connected — that gap is a void you cannot cross.",
-      "You move exactly the number of lands you rolled, following the arrows. Towers (the bright-rimmed lands) are where new legions enter and are safe staging points.",
+      "After rolling, select a legion to light up its legal destinations (green halos). You move exactly the number of lands you rolled, and you may never reverse the step you just took. Two lands with NO connector between them are not linked — that gap is a void you cannot cross.",
+      "The connectors carry the rules. Read them like this:",
+      [
+        "Brass arrow (triple-arrow track): the one-way flow around a ring. The arrowhead points to where you may go.",
+        "Verdigris arrow (gateway): a cross-link between rings or into the central summit. A summit gateway may be crossed only on the SECOND step of a move.",
+        "Red arrow (block): a FORCED exit. A legion that begins its move on a land bearing a block must make its first step across that block — it is not a barrier but a one-way push (it is also how legions drop out of the central summit).",
+      ],
+      "The forced-flow rule. Once your legion moves INTO a land that carries a triple-arrow track, it must keep following that arrow if it moves on — it cannot turn off onto a side gateway mid-move. So a legion riding a ring stays on the ring. The two ways to change tracks are: leave on your FIRST step (your starting land, including a Tower, lets you set off in any legal direction), or take the inward summit gateway on your SECOND step. This is why the outer ring is a trap and the Towers are prized launch points.",
+      "The block rule. If your legion ended last turn on a land that has a block (a red arrow), its very first step this turn is forced across that block — you have no other first move. Watch for this when parking a legion: a block land commits your next departure in advance.",
+      "Towers (the bright-rimmed lands) carry single arrows, not a track, so a legion starting in one may leave by any of its arrows — and they are where new legions enter and stage safely.",
     ],
   },
   {

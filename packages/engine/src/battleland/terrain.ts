@@ -145,6 +145,7 @@ export function movementRulesFor(
     if (flies) return true; // flyers overfly anything mid-route
     if (isImpassableTerrain(hex.terrain)) return false; // Tree/Volcano block ground
     if (hex.terrain === "Bog" && !native("Bog")) return false;
+    if (ctx.isOccupied(c)) return false; // ground creatures cannot move THROUGH an occupied hex
     return true;
   };
 

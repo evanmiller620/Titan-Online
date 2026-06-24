@@ -75,12 +75,15 @@ export class MoveLegionCommand extends BaseCommand<MoveLegionPayload> {
       return invalid(ValidationCode.ALREADY_MOVED, "that legion has already moved this turn");
     }
 
-    const routes = destinationsForRoll(legion.land, state.turn.movementRoll);
+    // Lands held by an enemy legion — a moving legion may END on one (engaging)
+    // but may not pass THROUGH it (Law of Titan).
+    const enemyLands = enemyOccupiedLands(state, this.playerId);
+    const routes = destinationsForRoll(legion.land, state.turn.movementRoll, (land) => enemyLands.has(land));
     const legal = routes.some((r) => r.destination === this.payload.destination);
     if (!legal) {
       return invalid(
         ValidationCode.ILLEGAL_MOVE,
-        `${this.payload.destination} is not reachable from ${legion.land} in ${state.turn.movementRoll}`,
+        `${this.payload.destination} is not reachable from ${legion.land} in ${state.turn.movementRoll} (you may not move through an enemy legion)`,
       );
     }
 
@@ -277,7 +280,8 @@ export function unmovedButAble(state: GameState): LegionId | null {
   if (state.turn.movementRoll === null) return null;
   for (const legion of legionsOf(state, activeId(state))) {
     if (legion.moved) continue;
-    const routes = destinationsForRoll(legion.land, state.turn.movementRoll);
+    const enemyLands = enemyOccupiedLands(state, legion.ownerId);
+    const routes = destinationsForRoll(legion.land, state.turn.movementRoll, (land) => enemyLands.has(land));
     // A legion can satisfy its obligation by ordinary move if any destination
     // is free of friendly legions.
     const canMove = routes.some(

@@ -175,15 +175,34 @@ describe("masterboard movement", () => {
     }
   });
 
-  it("never enters a land across a BLOCK side", () => {
-    // For each route, each consecutive pair must be a non-BLOCK edge.
-    for (const l of [1, 4, 1000, 100]) {
+  it("a block is a FORCED EXIT: a legion starting on a block land must leave across the block", () => {
+    // Land 4 has ARROWS->5 and BLOCK->103. A legion sitting on 4 may not take the
+    // arrow on its first step — it is forced across the block to 103.
+    const blockLands = MASTER_LANDS.filter((l) => l.exits.some((e) => e.type === "BLOCK"));
+    assert.ok(blockLands.length > 0);
+    for (const l of blockLands) {
+      const blockTargets = new Set(l.exits.filter((e) => e.type === "BLOCK").map((e) => e.to));
+      for (let roll = 1; roll <= 6; roll++) {
+        for (const r of destinationsForRoll(l.id, roll)) {
+          assert.ok(blockTargets.has(r.path[1]!), `from block land ${l.id}, first step ${r.path[1]} was not across the block`);
+        }
+      }
+    }
+    // A one-step move off a block land lands exactly on the block target.
+    assert.deepEqual(destinationsForRoll(4, 1).map((r) => r.destination), [103]);
+    // The summit lands drop out via their block (land 1000 -> 1).
+    assert.deepEqual(destinationsForRoll(1000, 1).map((r) => r.destination), [1]);
+  });
+
+  it("blocks are inert mid-move: a route never crosses a block except as its forced first step", () => {
+    for (const l of [1, 2, 100, 21]) { // start lands WITHOUT a block exit
+      assert.ok(!getLand(l)!.exits.some((e) => e.type === "BLOCK"));
       for (let roll = 1; roll <= 6; roll++) {
         for (const r of destinationsForRoll(l, roll)) {
           for (let i = 1; i < r.path.length; i++) {
             const edge = exitsOf(r.path[i - 1]!).find((e) => e.to === r.path[i]);
             assert.ok(edge, `no edge ${r.path[i - 1]}->${r.path[i]}`);
-            assert.notEqual(edge!.type, "BLOCK", `entered ${r.path[i]} via BLOCK`);
+            assert.notEqual(edge!.type, "BLOCK", `crossed a block mid-move into ${r.path[i]}`);
           }
         }
       }
@@ -216,6 +235,17 @@ describe("masterboard movement", () => {
     assert.ok(loopers.length > 0, "expected at least one land with a 6-roll self-loop");
   });
 
+  it("may END on an enemy land (engage) but may not pass THROUGH it", () => {
+    // Ring path 1 ->2 ->3 ->4 (all triple arrows). Put an enemy on land 3.
+    const enemyAt = (land: number) => land === 3;
+    // Roll 2 ends exactly on 3 — a legal engagement.
+    assert.ok(destinationsForRoll(1, 2, enemyAt).some((r) => r.destination === 3));
+    // Roll 3 would have to pass THROUGH 3 to reach 4 — now pruned.
+    assert.ok(!destinationsForRoll(1, 3, enemyAt).some((r) => r.destination === 4));
+    // Sanity: with no enemy, 4 IS reachable on a 3.
+    assert.ok(destinationsForRoll(1, 3).some((r) => r.destination === 4));
+  });
+
   it("traversableSteps excludes the came-from land and BLOCK entries", () => {
     // Land 4 has an ARROWS exit to 5 and a BLOCK exit to 103.
     const fromScratch = traversableSteps(4, null).map((e) => e.to).sort((a, b) => a - b);
@@ -224,6 +254,107 @@ describe("masterboard movement", () => {
     // Coming from 5, you can't step back to 5.
     const cameFrom5 = traversableSteps(4, 5).map((e) => e.to);
     assert.ok(!cameFrom5.includes(5));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Property-based invariants: EVERY route from EVERY land on EVERY roll must
+// obey the Law-of-Titan movement rules. These exhaustively re-check the walker.
+// ---------------------------------------------------------------------------
+
+describe("masterboard movement invariants (every land × roll)", () => {
+  const SUMMIT = 1000;
+  const exitType = (from: number, to: number): string | undefined =>
+    exitsOf(from).find((e) => e.to === to)?.type;
+  const hasArrows = (land: number): boolean =>
+    (LAND_BY_ID.get(land)?.exits ?? []).some((e) => e.type === "ARROWS");
+  const blockTargets = (land: number): number[] =>
+    (LAND_BY_ID.get(land)?.exits ?? []).filter((e) => e.type === "BLOCK").map((e) => e.to);
+
+  it("every route is a chain of real directed exits, exact length, no immediate backtrack", () => {
+    for (const l of MASTER_LANDS) {
+      for (let roll = 1; roll <= 6; roll++) {
+        for (const r of destinationsForRoll(l.id, roll)) {
+          assert.equal(r.path.length, roll + 1, `length for ${l.id} roll ${roll}`);
+          assert.equal(r.path[0], l.id);
+          assert.equal(r.path[r.path.length - 1], r.destination);
+          for (let i = 1; i < r.path.length; i++) {
+            assert.ok(exitType(r.path[i - 1]!, r.path[i]!), `no exit ${r.path[i - 1]}->${r.path[i]}`);
+            if (i >= 2) assert.notEqual(r.path[i], r.path[i - 2], `immediate backtrack in ${r.path}`);
+          }
+        }
+      }
+    }
+  });
+
+  it("triple-arrow forced continuation holds on every route (save the 2nd-step summit dive)", () => {
+    for (const l of MASTER_LANDS) {
+      for (let roll = 2; roll <= 6; roll++) {
+        for (const r of destinationsForRoll(l.id, roll)) {
+          // p_i (1 ≤ i ≤ len-2) is a land the legion MOVED INTO and continued from.
+          for (let i = 1; i < r.path.length - 1; i++) {
+            const from = r.path[i]!, to = r.path[i + 1]!;
+            if (!hasArrows(from)) continue;
+            const t = exitType(from, to);
+            const secondStepSummitDive = i === 1 && t === "ARCH" && to >= SUMMIT;
+            assert.ok(t === "ARROWS" || secondStepSummitDive,
+              `forced continuation violated: step ${i} of ${r.path} left a triple-arrow land via ${t}`);
+          }
+        }
+      }
+    }
+  });
+
+  it("a legion beginning on a block land takes the block on its first step, every roll", () => {
+    for (const l of MASTER_LANDS) {
+      const blocks = blockTargets(l.id);
+      if (blocks.length === 0) continue;
+      for (let roll = 1; roll <= 6; roll++) {
+        for (const r of destinationsForRoll(l.id, roll)) {
+          assert.ok(blocks.includes(r.path[1]!), `block land ${l.id} first step ${r.path[1]} not across a block`);
+        }
+      }
+    }
+  });
+
+  it("the summit GATEWAY (from outside) is crossed only on the second step; within-summit moves are free", () => {
+    for (const l of MASTER_LANDS) {
+      if (l.id >= SUMMIT) continue;
+      // First step never reaches a summit at all.
+      assert.ok(!destinationsForRoll(l.id, 1).some((r) => r.destination >= SUMMIT), `summit in 1 step from ${l.id}`);
+      for (let roll = 2; roll <= 6; roll++) {
+        for (const r of destinationsForRoll(l.id, roll)) {
+          for (let i = 1; i < r.path.length; i++) {
+            const into = r.path[i]!, from = r.path[i - 1]!;
+            // Crossing IN from a non-summit land must be the 2nd step. Moving
+            // between two summit lands (already inside) is unrestricted.
+            if (into >= SUMMIT && from < SUMMIT) {
+              assert.equal(i, 2, `summit gateway into ${into} crossed at step ${i} in ${r.path}`);
+              assert.equal(exitType(from, into), "ARCH", `summit entered via non-ARCH in ${r.path}`);
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it("an enemy on an intermediate land prunes every route that would pass through it", () => {
+    // Sample a spread of start lands to keep this fast but representative.
+    for (const l of MASTER_LANDS.filter((_, idx) => idx % 4 === 0)) {
+      for (let roll = 2; roll <= 6; roll++) {
+        const intermediates = new Set<number>();
+        for (const r of destinationsForRoll(l.id, roll)) {
+          for (let i = 1; i < r.path.length - 1; i++) intermediates.add(r.path[i]!);
+        }
+        for (const enemy of intermediates) {
+          for (const r of destinationsForRoll(l.id, roll, (land) => land === enemy)) {
+            for (let i = 1; i < r.path.length - 1; i++) {
+              assert.notEqual(r.path[i], enemy, `enemy ${enemy} still an intermediate from ${l.id} roll ${roll}`);
+            }
+          }
+        }
+      }
+    }
   });
 });
 
@@ -304,6 +435,16 @@ describe("move commands in the turn flow", () => {
     const dest = destinationsForRoll(100, 3)[0]!.destination;
     s = exec(s, new MoveLegionCommand("p1", { legionId: "Black-01", destination: dest })).state;
     rejects(s, new MoveLegionCommand("p1", { legionId: "Black-01", destination: dest }), ValidationCode.ALREADY_MOVED);
+  });
+
+  it("rejects landing a legion on top of another of your own legions", () => {
+    let s = atMovement();
+    s = exec(s, new RollMovementCommand("p1", {}), scriptedRng([3])).state;
+    // Both p1 legions start at tower 100, so they share a destination set.
+    const dest = destinationsForRoll(100, 3)[0]!.destination;
+    s = exec(s, new MoveLegionCommand("p1", { legionId: "Black-01", destination: dest })).state;
+    // Black-02 may not stack onto Black-01's new land.
+    rejects(s, new MoveLegionCommand("p1", { legionId: "Black-02", destination: dest }), ValidationCode.ILLEGAL_MOVE);
   });
 
   it("EndMovement needs ONLY one legion moved (Avalon Hill), not all of them", () => {

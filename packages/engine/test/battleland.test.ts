@@ -255,6 +255,26 @@ describe("battleland movement rules", () => {
     if (hexAt(grid, beyond)) assert.ok(destinations.has(cubeKey(beyond)));
   });
 
+  it("a ground creature cannot move THROUGH an occupied hex (only flyers overfly)", () => {
+    const grid = gridFor("Plains");
+    const start = startAt(grid, "D3");
+    const blocked = cubeNeighbor(start, 0); // D4
+    const beyond = cubeNeighbor(blocked, 0); // D5 — its ONLY 2-step path is straight through D4
+    assert.ok(hexAt(grid, blocked) && hexAt(grid, beyond), "corridor hexes are on the board");
+    const occupied = (c: CubeCoord) => cubeKey(c) === cubeKey(blocked);
+
+    // With a 2-step budget the detour around the occupied hex is too long, so a
+    // ground creature can reach `beyond` only by passing through it — which is
+    // now forbidden.
+    const ground = reachable(start, movementRulesFor("Centaur", grid, { isOccupied: occupied, maxSteps: 2 })).destinations;
+    assert.ok(!ground.has(cubeKey(blocked)), "ground cannot enter the occupied hex");
+    assert.ok(!ground.has(cubeKey(beyond)), "ground cannot path through the occupied hex");
+
+    // A flyer with the same allowance reaches `beyond` by overflight.
+    const flyer = reachable(start, movementRulesFor("Gargoyle", grid, { isOccupied: occupied, maxSteps: 2 })).destinations;
+    assert.ok(flyer.has(cubeKey(beyond)), "a flyer overflies the occupied hex");
+  });
+
   function startAtAnyPlains(grid: BattleGrid): CubeCoord {
     return grid.map.hexes.find((h) => h.terrain === "Plains")!.cube;
   }
@@ -330,4 +350,40 @@ describe("battleland entry", () => {
     assert.ok(entryHexesLegal(ATTACKER_SIDES.BOTTOM, ["C1", "D1"]));
     assert.ok(!entryHexesLegal(ATTACKER_SIDES.BOTTOM, ["C1", "A3"]));
   });
+});
+
+// ---------------------------------------------------------------------------
+// Movement invariants that must hold on EVERY battleland (catch data/logic
+// regressions across all eleven maps at once).
+// ---------------------------------------------------------------------------
+
+describe("movement invariants across all eleven battlelands", () => {
+  for (const name of Object.keys(BATTLE_MAPS)) {
+    it(`${name}: ground movers never end on impassable/bog, and flyers reach at least as far`, () => {
+      const grid = indexMap(BATTLE_MAPS[name]!);
+      const open = grid.map.hexes.find((h) => h.terrain === "Plains" && h.elevation === 0);
+      assert.ok(open, `${name} should have an open Plains hex to start from`);
+      if (!open) return;
+
+      // Centaur: a plain ground creature, native to nothing relevant here.
+      const ground = movementRulesFor("Centaur", grid, { isOccupied: () => false, maxSteps: 4 });
+      const groundDest = reachable(open.cube, ground).destinations;
+      assert.ok(groundDest.size > 0, `${name}: a ground mover should be able to move`);
+      for (const key of groundDest.keys()) {
+        const h = grid.byKey.get(key)!;
+        assert.ok(!isImpassableTerrain(h.terrain), `${name}: ground mover ended on impassable ${h.terrain}`);
+        assert.notEqual(h.terrain, "Bog", `${name}: a non-native ended on Bog`);
+      }
+
+      // A flyer ignores slowing/blocking terrain mid-route, so it reaches at
+      // least every hex a ground creature can (same start, same allowance).
+      const flyer = movementRulesFor("Gargoyle", grid, { isOccupied: () => false, maxSteps: 4 });
+      const flyerDest = reachable(open.cube, flyer).destinations;
+      assert.ok(flyerDest.size >= groundDest.size, `${name}: flyer should reach ≥ ground`);
+      for (const key of flyerDest.keys()) {
+        const h = grid.byKey.get(key)!;
+        assert.ok(!isImpassableTerrain(h.terrain), `${name}: flyer ended on impassable ${h.terrain}`);
+      }
+    });
+  }
 });
