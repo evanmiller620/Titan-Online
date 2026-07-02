@@ -54,7 +54,9 @@ describe("guidance — what to do now", () => {
   });
 
   it("guides engagement and mustering", () => {
-    has(currentGuidance(mkView("Turn.Engagement.Choosing"), "p1", NO_SEL, true).title, "Resolve the clash");
+    has(currentGuidance(mkView("Turn.Engagement.Choosing"), "p1", NO_SEL, true).title, "Enemies share a land");
+    has(currentGuidance(mkView("Turn.Engagement.Choosing"), "p1", NO_SEL, true).detail ?? "", "contested land");
+    has(currentGuidance(mkView("Turn.Engagement.Negotiation"), "p1", NO_SEL, true).title, "Resolve the clash");
     has(currentGuidance(mkView("Turn.Mustering"), "p1", NO_SEL, true).title, "Recruit");
   });
 

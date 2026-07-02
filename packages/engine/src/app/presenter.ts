@@ -15,6 +15,7 @@
 import { BATTLE_MAPS, attackerEntryHexes, defenderEntryHexes, indexMap, movementRulesFor, isImpassableTerrain } from "../battleland/index.ts";
 import { reachable, cubeKey, cubeNeighbor, cubeDistance, type CubeCoord } from "../hex/index.ts";
 import { CREATURE_STATS, eligibleRecruits, LORDS, RECRUIT_CHAINS, TOWER_CREATURES } from "../creatures/index.ts";
+import { planRangestrike } from "../combat/index.ts";
 import { destinationsForRoll, towerTeleportTargets, titanTeleportTargets, isTower, getLand, MASTER_LANDS, type MasterTerrain } from "../masterboard/index.ts";
 import { PLAYER_COLORS } from "../state/GameState.ts";
 import type { GameStateView } from "../state/views.ts";
@@ -198,17 +199,30 @@ function battleActions(view: GameStateView, seat: string, sel: Selection, dto: (
 // Board click planning
 // ---------------------------------------------------------------------------
 
-/** Masterboard: select your legion, then click a legal destination to move. */
+/** Masterboard: select your legion, then click a legal destination to move.
+ *  During the Engagement phase, clicking a contested land opens that clash. */
 export function planMasterboardClick(view: GameStateView, seat: string | null, sel: Selection, landId: number): ClickPlan {
   if (seat === null) return {};
   const here = Object.values(view.legions).filter((l) => l.land === landId);
   const mine = here.find((l) => l.ownerId === seat);
 
+  // Engagement phase: tapping a contested land selects that engagement — the
+  // board is the natural place to answer "which clash do I resolve?".
+  if (view.fsm.path.endsWith("Engagement.Choosing") && seatActsNow(view, seat)) {
+    if (new Set(here.map((l) => l.ownerId)).size >= 2) {
+      return { dto: { type: "SelectEngagement", playerId: seat, payload: { land: landId } } };
+    }
+  }
+
   if (view.fsm.path.endsWith("Movement") && view.turn.movementRoll != null && sel.legion) {
     const leg = view.legions[sel.legion];
     if (leg && leg.ownerId === seat && !leg.moved) {
-      const dests = destinationsForRoll(leg.land, view.turn.movementRoll);
-      if (dests.some((d) => d.destination === landId)) {
+      // EXACTLY the legality the board highlight shows (reachableLands): an
+      // enemy legion STOPS movement — you may land on it (that's an attack,
+      // resolved as an engagement after movement) but never pass through it —
+      // and your own legions block a destination. Anything else is a
+      // (re)selection, never a doomed command.
+      if (reachableLands(view, seat, leg.marker).includes(landId)) {
         return { dto: { type: "MoveLegion", playerId: seat, payload: { legionId: leg.marker, destination: landId } } };
       }
     }
@@ -262,6 +276,12 @@ export function planBattleClick(view: GameStateView, seat: string | null, sel: S
 
   if (path.endsWith("Round.Maneuver")) {
     if (at) return {};
+    // Engagement is binding: a character adjacent to a living enemy may not
+    // maneuver (mirrors MoveCombatantCommand exactly).
+    const engaged = b.combatants.some(
+      (e) => e.side !== side && !e.slain && e.hex && cubeDistance(me.hex!, e.hex) === 1,
+    );
+    if (engaged) return {};
     const grid = indexMap(BATTLE_MAPS[b.terrain]!);
     const occ = new Set(b.combatants.filter((c) => !c.slain && c.hex && c.id !== me.id).map((c) => cubeKey(c.hex!)));
     const rules = movementRulesFor(me.creature, grid, { isOccupied: (q) => occ.has(cubeKey(q)), maxSteps: CREATURE_STATS[me.creature].skill });
@@ -274,9 +294,43 @@ export function planBattleClick(view: GameStateView, seat: string | null, sel: S
     if (at && at.side !== side && cubeDistance(me.hex, at.hex!) === 1) {
       return { dto: { type: "Strike", playerId: seat, payload: { strikerId: me.id, targetId: at.id } } };
     }
+    // A distant enemy during YOUR Strike phase: try a rangestrike (§12). The
+    // engine re-validates; we pre-check legality so misclicks stay silent.
+    if (at && at.side !== side && path.endsWith("Round.Strike") && side === b.activeSide
+        && cubeDistance(me.hex, at.hex!) >= 2 && rangestrikeLegal(view, me.id, at.id)) {
+      return { dto: { type: "Rangestrike", playerId: seat, payload: { strikerId: me.id, targetId: at.id } } };
+    }
     return {};
   }
   return {};
+}
+
+/** Would this rangestrike be legal right now? (Pure pre-check for the UI.) */
+export function rangestrikeLegal(view: GameStateView, strikerId: string, targetId: string): boolean {
+  const b = view.battle;
+  if (!b) return false;
+  const striker = b.combatants.find((c) => c.id === strikerId);
+  const target = b.combatants.find((c) => c.id === targetId);
+  if (!striker || !target || striker.slain || target.slain || !striker.hex || !target.hex) return false;
+  if (striker.struckThisPhase) return false;
+  const grid = indexMap(BATTLE_MAPS[b.terrain]!);
+  const occupied = new Set(b.combatants.filter((c) => !c.slain && c.hex).map((c) => cubeKey(c.hex!)));
+  const inContact = b.combatants.some(
+    (e) => e.side !== striker.side && !e.slain && e.hex && cubeDistance(striker.hex!, e.hex) === 1,
+  );
+  const score = (side: string) =>
+    (view.players[side === "attacker" ? b.attackerPlayerId : b.defenderPlayerId] as { score?: number } | undefined)?.score ?? 0;
+  return planRangestrike({
+    grid,
+    attacker: striker.creature as never,
+    defender: target.creature as never,
+    from: striker.hex,
+    to: target.hex,
+    attackerInContact: inContact,
+    isOccupied: (c) => occupied.has(cubeKey(c)),
+    attackerScore: score(striker.side),
+    defenderScore: score(target.side),
+  }).ok;
 }
 
 // ---------------------------------------------------------------------------

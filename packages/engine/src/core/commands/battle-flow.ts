@@ -57,7 +57,7 @@ import { getLand } from "../../masterboard/board.data.ts";
 import { battleMapFor, type BattleHex, type BattleMap } from "../../battleland/maps.data.ts";
 import { indexMap, movementRulesFor, hexAt, isImpassableTerrain, type BattleGrid } from "../../battleland/terrain.ts";
 import { reachable } from "../../hex/pathfind.ts";
-import { cubeKey, type CubeCoord } from "../../hex/cube.ts";
+import { cubeDistance, cubeKey, type CubeCoord } from "../../hex/cube.ts";
 import {
   attackerEntryHexes,
   defenderEntryHexes,
@@ -180,6 +180,16 @@ function fire(draft: Draft, events: DomainEvent[], fsmEvent: string): void {
 
 function aliveOf(battle: BattleContext, side: Side): Combatant[] {
   return battle.combatants.filter((c) => c.side === side && !c.slain);
+}
+
+/** Is this combatant ENGAGED — adjacent to a living enemy on the board?
+ *  Engagement is binding in Titan: an engaged character may not maneuver and
+ *  MUST strike in its strike phase. */
+export function isEngaged(battle: BattleContext, c: Combatant): boolean {
+  if (!c.hex || c.slain) return false;
+  return battle.combatants.some(
+    (e) => e.side !== c.side && !e.slain && e.hex && cubeDistance(c.hex!, e.hex) === 1,
+  );
 }
 
 /** Can the attacker summon an Angel/Archangel from an unengaged legion now? */
@@ -328,6 +338,11 @@ export class MoveCombatantCommand extends BaseCommand<MoveCombatantPayload> {
     if (c.slain) return invalid(ValidationCode.ILLEGAL_MANEUVER, "that character is slain");
     if (c.movedThisPhase) return invalid(ValidationCode.ILLEGAL_MANEUVER, "already moved this phase");
     if (!c.hex) return invalid(ValidationCode.ILLEGAL_MANEUVER, "character not on the board");
+    // Engagement is binding (Law of Titan): a character adjacent to a living
+    // enemy is locked in melee and may not maneuver — flyers included.
+    if (isEngaged(battle, c)) {
+      return invalid(ValidationCode.ILLEGAL_MANEUVER, "an engaged character may not maneuver");
+    }
 
     const map = battleMapFor(battle.terrain)!;
     const grid = indexMap(map);
@@ -409,6 +424,17 @@ export class EndStrikesCommand extends BaseCommand<Record<string, never>> {
     if (this.playerId !== owner) return invalid(ValidationCode.NOT_ACTIVE_PLAYER, "not your strike phase");
     if (battle.summonPending) {
       return invalid(ValidationCode.ILLEGAL_PHASE_ADVANCE, "resolve the Angel summon first");
+    }
+    // Strikes are COMPULSORY (Law of Titan): every engaged character of the
+    // striking side must strike (or strike back) before the phase may end.
+    const owing = battle.combatants.find(
+      (c) => c.side === actor && !c.slain && c.hex && !c.struckThisPhase && isEngaged(battle, c),
+    );
+    if (owing) {
+      return invalid(
+        ValidationCode.ILLEGAL_PHASE_ADVANCE,
+        `engaged characters must strike — your ${owing.creature} has not`,
+      );
     }
     return valid;
   }
@@ -540,9 +566,11 @@ export class SummonAngelCommand extends BaseCommand<SummonAngelPayload> {
     const spot = picked ?? firstEmptyAdjacentToSide(grid, battle, "attacker", occ) ?? firstEmptyHex(grid, occ)!;
 
     const newId = `atk-s${battle.combatants.length}`;
+    // The summoned Lord arrives MID strike phase: it may not move or strike
+    // until the next phase (both flags set; they reset with the phase flow).
     const summoned: Combatant = {
       id: newId, side: "attacker", creature: want, hex: spot,
-      damage: 0, movedThisPhase: true, struckThisPhase: false, slain: false,
+      damage: 0, movedThisPhase: true, struckThisPhase: true, slain: false,
     };
     draft.battle = {
       ...battle,

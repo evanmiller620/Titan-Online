@@ -41,6 +41,7 @@ import {
   TowerTeleportCommand,
   TitanTeleportCommand,
 } from "../src/core/commands/movement.ts";
+import { pendingEngagements } from "../src/state/selectors.ts";
 
 // ---------------------------------------------------------------------------
 // Data integrity — verify the mechanical XML→TS conversion, don't trust it.
@@ -445,6 +446,41 @@ describe("move commands in the turn flow", () => {
     s = exec(s, new MoveLegionCommand("p1", { legionId: "Black-01", destination: dest })).state;
     // Black-02 may not stack onto Black-01's new land.
     rejects(s, new MoveLegionCommand("p1", { legionId: "Black-02", destination: dest }), ValidationCode.ILLEGAL_MOVE);
+  });
+
+  it("landing on an ENEMY legion is legal, ends the move there, and forces an engagement", () => {
+    let s = atMovement();
+    s = exec(s, new RollMovementCommand("p1", {}), scriptedRng([2])).state;
+    // Hand-place: p1's legion on track land 1, an enemy exactly the roll away (land 3).
+    s = {
+      ...s,
+      legions: {
+        ...s.legions,
+        "Black-01": { ...s.legions["Black-01"]!, land: 1 },
+        "Red-01": { ...s.legions["Red-01"]!, land: 3 },
+      },
+    };
+    s = exec(s, new MoveLegionCommand("p1", { legionId: "Black-01", destination: 3 })).state;
+    assert.equal(s.legions["Black-01"]!.land, 3, "the attack move lands ON the enemy");
+    // Ending Movement must open the Engagement phase — never skip to Mustering.
+    s = exec(s, new EndMovementCommand("p1", {})).state;
+    assert.equal(s.fsm.path, "Turn.Engagement.Choosing");
+    assert.deepEqual(pendingEngagements(s), [3]);
+  });
+
+  it("may not move THROUGH an enemy legion — it stops movement dead", () => {
+    let s = atMovement();
+    s = exec(s, new RollMovementCommand("p1", {}), scriptedRng([2])).state;
+    // Enemy sits at land 2, squarely between start (1) and the roll-2 destination (3).
+    s = {
+      ...s,
+      legions: {
+        ...s.legions,
+        "Black-01": { ...s.legions["Black-01"]!, land: 1 },
+        "Red-01": { ...s.legions["Red-01"]!, land: 2 },
+      },
+    };
+    rejects(s, new MoveLegionCommand("p1", { legionId: "Black-01", destination: 3 }), ValidationCode.ILLEGAL_MOVE);
   });
 
   it("EndMovement needs ONLY one legion moved (Avalon Hill), not all of them", () => {

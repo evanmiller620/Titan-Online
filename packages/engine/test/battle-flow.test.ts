@@ -358,8 +358,8 @@ describe("conclusion & scoring (§8)", () => {
   it("attacker time-loss at the end of round 7: legion lost, defender scores nothing", () => {
     const s = buildBattle({
       phase: "Strikeback", activeSide: "attacker", round: 7,
-      atk: [{ creature: "Ogre", label: "C3" }],
-      def: [{ creature: "Centaur", label: "C4" }],
+      atk: [{ creature: "Ogre", label: "A1" }],
+      def: [{ creature: "Centaur", label: "F1" }], // apart — no compulsory strikes owed
       homes: [{ marker: "Black-09", owner: "A", creatures: ["Titan"] }], // A survives via home Titan
     });
     const { state, events } = exec(s, new EndStrikesCommand("B", {}));
@@ -378,7 +378,7 @@ describe("conclusion & scoring (§8)", () => {
 describe("round & half-turn bookkeeping", () => {
   it("ending the defender's strikeback passes to the attacker half, same round", () => {
     const s = buildBattle({ phase: "Strikeback", activeSide: "defender", round: 1,
-      atk: [{ creature: "Ogre", label: "C3" }], def: [{ creature: "Centaur", label: "C4" }] });
+      atk: [{ creature: "Ogre", label: "A1" }], def: [{ creature: "Centaur", label: "F1" }] });
     // In Strikeback the non-active side (attacker, A) acts.
     const { state } = exec(s, new EndStrikesCommand("A", {}));
     assert.equal(state.battle!.activeSide, "attacker");
@@ -388,7 +388,7 @@ describe("round & half-turn bookkeeping", () => {
 
   it("ending the attacker's strikeback completes the round and increments it", () => {
     const s = buildBattle({ phase: "Strikeback", activeSide: "attacker", round: 1,
-      atk: [{ creature: "Ogre", label: "C3" }], def: [{ creature: "Centaur", label: "C4" }] });
+      atk: [{ creature: "Ogre", label: "A1" }], def: [{ creature: "Centaur", label: "F1" }] });
     const { state } = exec(s, new EndStrikesCommand("B", {}));
     assert.equal(state.battle!.activeSide, "defender");
     assert.equal(state.battle!.round, 2);
@@ -551,5 +551,145 @@ describe("battle conclusions", () => {
     assert.equal(state.legions["Black-01"]!.land, PLAINS, "winner holds the contested land");
     assert.equal(state.players.A!.score, pointValue("Centaur"), "scored the slain Centaur");
     assert.ok(!state.legions["Red-01"], "the wiped legion is removed");
+  });
+});
+
+// ===========================================================================
+// Ironproofing: engagement is binding, strikes are compulsory, rangestrikes
+// are a real command (§12), and deployment geometry matches §6.1.
+// ===========================================================================
+
+import { RangestrikeCommand } from "../src/core/commands/battle-strike.ts";
+import { ATTACKER_SIDES, DEFENDER_SIDES } from "../src/battleland/entry.ts";
+
+describe("engagement lock & compulsory strikes", () => {
+  it("an engaged character may not maneuver away", () => {
+    const s = buildBattle({
+      phase: "Maneuver", activeSide: "defender",
+      atk: [{ creature: "Ogre", label: "C3" }],
+      def: [{ creature: "Centaur", label: "C4" }, { creature: "Lion", label: "F1" }],
+    });
+    // C4 is adjacent to C3 → the Centaur is locked in melee.
+    rejects(s, new MoveCombatantCommand("B", { combatantId: "def-0", hex: "C5" }), ValidationCode.ILLEGAL_MANEUVER);
+    // The unengaged Lion at F1 moves freely.
+    const v = new MoveCombatantCommand("B", { combatantId: "def-1", hex: "F2" }).validate(s);
+    assert.ok(v.ok, !v.ok ? v.failure.message : "");
+  });
+
+  it("the phase cannot end while an engaged character has not struck", () => {
+    let s = buildBattle({
+      phase: "Strike", activeSide: "attacker",
+      atk: [{ creature: "Ogre", label: "C3" }],
+      def: [{ creature: "Centaur", label: "C4" }],
+    });
+    rejects(s, new EndStrikesCommand("A", {}), ValidationCode.ILLEGAL_PHASE_ADVANCE);
+    // After the Ogre strikes (all misses), the phase may end.
+    s = exec(s, new StrikeCommand("A", { strikerId: "atk-0", targetId: "def-0" }), scriptedRng([1, 1, 1, 1, 1, 1])).state;
+    const v = new EndStrikesCommand("A", {}).validate(s);
+    assert.ok(v.ok, !v.ok ? v.failure.message : "");
+  });
+
+  it("strikebacks are compulsory too", () => {
+    const s = buildBattle({
+      phase: "Strikeback", activeSide: "attacker", // → defender strikes back
+      atk: [{ creature: "Ogre", label: "C3" }],
+      def: [{ creature: "Centaur", label: "C4" }],
+    });
+    rejects(s, new EndStrikesCommand("B", {}), ValidationCode.ILLEGAL_PHASE_ADVANCE);
+  });
+});
+
+describe("rangestrike command (§12)", () => {
+  it("a Gorgon rangestrikes a distant enemy; hits apply, never carrying", () => {
+    // C1→C4 is cube distance 3 (range 4): legal, with the −1 skill long-shot tax.
+    const s = buildBattle({
+      phase: "Strike", activeSide: "attacker",
+      atk: [{ creature: "Gorgon", label: "C1" }],
+      def: [{ creature: "Centaur", label: "C4" }],
+    });
+    // Gorgon power 6 → 3 range dice; strike number 4-((3-1)-4)=6.
+    const { state, events } = exec(s, new RangestrikeCommand("A", { strikerId: "atk-0", targetId: "def-0" }), scriptedRng([6, 6, 6]));
+    const target = state.battle!.combatants.find((c) => c.id === "def-0")!;
+    assert.ok(target.slain, "three 6s slay the Centaur (threshold 3)");
+    assert.ok(state.battle!.combatants.find((c) => c.id === "atk-0")!.struckThisPhase);
+    const ev = events.find((e) => e.type === "StrikeResolved");
+    assert.ok(ev && ev.type === "StrikeResolved" && ev.dice === 3 && ev.strikeNumber === 6);
+    assert.ok(state.battle!.summonPending === false || state.battle!.summonPending === true); // flag well-formed
+  });
+
+  it("rejects: in contact, adjacent target, non-rangestriker, Lord target, strikeback phase", () => {
+    // In contact: Gorgon at C3 touches the Centaur at C4 → no rangestrike at anyone.
+    const contact = buildBattle({
+      phase: "Strike", activeSide: "attacker",
+      atk: [{ creature: "Gorgon", label: "C3" }],
+      def: [{ creature: "Centaur", label: "C4" }, { creature: "Lion", label: "C1" }],
+    });
+    rejects(contact, new RangestrikeCommand("A", { strikerId: "atk-0", targetId: "def-1" }), ValidationCode.ILLEGAL_STRIKE);
+
+    // Adjacent target must be struck in melee.
+    rejects(contact, new RangestrikeCommand("A", { strikerId: "atk-0", targetId: "def-0" }), ValidationCode.ILLEGAL_STRIKE);
+
+    // A non-rangestriker cannot shoot.
+    const ogre = buildBattle({
+      phase: "Strike", activeSide: "attacker",
+      atk: [{ creature: "Ogre", label: "C1" }],
+      def: [{ creature: "Centaur", label: "C4" }],
+    });
+    rejects(ogre, new RangestrikeCommand("A", { strikerId: "atk-0", targetId: "def-0" }), ValidationCode.ILLEGAL_STRIKE);
+
+    // Lords are immune to non-Warlock rangestrikes.
+    const lord = buildBattle({
+      phase: "Strike", activeSide: "attacker",
+      atk: [{ creature: "Gorgon", label: "C1" }],
+      def: [{ creature: "Angel", label: "C4" }],
+    });
+    rejects(lord, new RangestrikeCommand("A", { strikerId: "atk-0", targetId: "def-0" }), ValidationCode.ILLEGAL_STRIKE);
+
+    // Only the MOVING side, only in its Strike phase — never in Strikeback.
+    const sb = buildBattle({
+      phase: "Strikeback", activeSide: "defender",
+      atk: [{ creature: "Gorgon", label: "C1" }],
+      def: [{ creature: "Centaur", label: "C4" }],
+    });
+    rejects(sb, new RangestrikeCommand("A", { strikerId: "atk-0", targetId: "def-0" }), ValidationCode.WRONG_PHASE);
+  });
+
+  it("a Warlock magic missile slays a Lord and ignores the long-shot penalty", () => {
+    const s = buildBattle({
+      phase: "Strike", activeSide: "attacker", aScore: 0,
+      atk: [{ creature: "Warlock", label: "C1" }],
+      def: [{ creature: "Angel", label: "C4" }],
+    });
+    // Warlock power 5 → 2 dice; skill 4 vs Angel skill 4 → strike number 4 — and
+    // NO −1 long-shot skill tax despite range 4 (magic missile).
+    const { state, events } = exec(s, new RangestrikeCommand("A", { strikerId: "atk-0", targetId: "def-0" }), scriptedRng([6, 6]));
+    const ev = events.find((e) => e.type === "StrikeResolved");
+    assert.ok(ev && ev.type === "StrikeResolved" && ev.strikeNumber === 4 && ev.dice === 2,
+      `strikeNumber ${(ev as { strikeNumber?: number })?.strikeNumber} dice ${(ev as { dice?: number })?.dice}`);
+    assert.equal(state.battle!.combatants.find((c) => c.id === "def-0")!.damage, 2);
+  });
+});
+
+describe("deployment geometry matches the Law of Titan §6.1", () => {
+  it("attacker and defender hex sets are exactly the documented ones", () => {
+    assert.deepEqual([...ATTACKER_SIDES.BOTTOM], ["A1", "B1", "C1", "D1"]);
+    assert.deepEqual([...DEFENDER_SIDES.BOTTOM], ["D6", "E5", "F4"]);
+    assert.deepEqual([...ATTACKER_SIDES.LEFT], ["A3", "B4", "C5", "D6"]);
+    assert.deepEqual([...DEFENDER_SIDES.LEFT], ["D1", "E1", "F1"]);
+    assert.deepEqual([...ATTACKER_SIDES.RIGHT], ["F1", "F2", "F3", "F4"]);
+    assert.deepEqual([...DEFENDER_SIDES.RIGHT], ["A1", "A2", "A3"]);
+  });
+});
+
+describe("summoned Angel timing", () => {
+  it("arrives unable to move or strike until the next phase", () => {
+    const s = buildBattle({
+      phase: "Strike", activeSide: "attacker", summonPending: true,
+      atk: [{ creature: "Ogre", label: "C3" }], def: [{ creature: "Centaur", label: "C4", slain: true }],
+      homes: [{ marker: "Black-05", owner: "A", creatures: ["Angel"] }],
+    });
+    const { state } = exec(s, new SummonAngelCommand("A", { fromLegion: "Black-05", hex: "A1" }));
+    const angel = state.battle!.combatants.find((c) => c.creature === "Angel" && c.side === "attacker")!;
+    assert.ok(angel.movedThisPhase && angel.struckThisPhase, "summoned mid-phase — acts from the next phase");
   });
 });

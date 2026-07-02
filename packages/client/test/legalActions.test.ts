@@ -107,6 +107,76 @@ describe("legalActions — setup & turn phases", () => {
   });
 });
 
+describe("planMasterboardClick — enemy legions stop movement (and start battles)", () => {
+  // Real setup state, then legions hand-placed on the track: p1 at land 1,
+  // rolled 2, so the only graph destination is land 3 (1→2→3).
+  function movementState(legions: Record<string, { owner: string; land: number; creatures: string[] }>) {
+    const s = afterSetup();
+    const fsm = transition(GAME_MACHINE, (s as any).fsm, "SPLITS_COMPLETED");
+    const mk = ([marker, l]: [string, { owner: string; land: number; creatures: string[] }]) =>
+      [marker, { marker, ownerId: l.owner, land: l.land, creatures: l.creatures, moved: false, splitThisTurn: false, recruitedThisTurn: false, revealed: false }] as const;
+    return {
+      ...s, fsm,
+      turn: { ...s.turn, number: 2, movementRoll: 2 },
+      legions: Object.fromEntries(Object.entries(legions).map(mk)),
+    } as any;
+  }
+  const base = {
+    "Bk01": { owner: "p1", land: 1, creatures: ["Titan", "Ogre"] },
+    "Rd09": { owner: "p2", land: 400, creatures: ["Titan", "Angel"] },
+  };
+
+  it("clicking an enemy-occupied destination IS a move (the attack that forces an engagement)", () => {
+    const s = movementState({ ...base, "Rd01": { owner: "p2", land: 3, creatures: ["Centaur"] } });
+    const v = viewFor(s, "p1");
+    assert.deepEqual(reachableLands(v, "p1", "Bk01"), [3], "the enemy land itself is reachable");
+    const plan = planMasterboardClick(v, "p1", sel({ legion: "Bk01" }), 3);
+    assert.equal(plan.dto?.type, "MoveLegion");
+    assert.equal((plan.dto?.payload as any).destination, 3);
+  });
+
+  it("never issues a move THROUGH an enemy legion (movement stops at the enemy)", () => {
+    const s = movementState({ ...base, "Rd01": { owner: "p2", land: 2, creatures: ["Centaur"] } });
+    const v = viewFor(s, "p1");
+    assert.deepEqual(reachableLands(v, "p1", "Bk01"), [], "no destination beyond the blocker");
+    const plan = planMasterboardClick(v, "p1", sel({ legion: "Bk01" }), 3);
+    assert.equal(plan.dto, undefined, "click must not submit a doomed MoveLegion");
+  });
+
+  it("never issues a move onto your OWN legion", () => {
+    const s = movementState({ ...base, "Bk02": { owner: "p1", land: 3, creatures: ["Gargoyle", "Gargoyle"] } });
+    const v = viewFor(s, "p1");
+    const plan = planMasterboardClick(v, "p1", sel({ legion: "Bk01" }), 3);
+    assert.equal(plan.dto, undefined);
+    // Clicking your own legion's land selects that legion instead.
+    assert.equal(plan.select?.legion, "Bk02");
+  });
+
+  it("the click-plan agrees with the engine: every clickable move validates", () => {
+    const s = movementState({ ...base, "Rd01": { owner: "p2", land: 3, creatures: ["Centaur"] } });
+    const v = viewFor(s, "p1");
+    const dests = reachableLands(v, "p1", "Bk01");
+    assert.ok(dests.length > 0);
+    for (const land of dests) {
+      const plan = planMasterboardClick(v, "p1", sel({ legion: "Bk01" }), land);
+      assert.equal(plan.dto?.type, "MoveLegion");
+    }
+  });
+
+  it("during Engagement.Choosing, clicking the contested land opens that clash", () => {
+    const s = movementState({ ...base, "Rd01": { owner: "p2", land: 1, creatures: ["Centaur"] } });
+    // Advance the FSM into the Engagement phase (both legions now share land 1).
+    const fsm = transition(GAME_MACHINE, (s as any).fsm, "MOVEMENT_COMPLETED");
+    const v = viewFor({ ...s, fsm } as any, "p1");
+    assert.equal(v.fsm.path, "Turn.Engagement.Choosing");
+    const plan = planMasterboardClick(v, "p1", NO_SELECTION, 1);
+    assert.equal(plan.dto?.type, "SelectEngagement");
+    assert.deepEqual(plan.dto?.payload, { land: 1 });
+    // An uncontested land is NOT an engagement.
+    assert.equal(planMasterboardClick(v, "p1", NO_SELECTION, 400).dto, undefined);
+  });
+});
+
 describe("autoAction — fastplay forced-single-option", () => {
   it("auto-rolls turn order at game start (the only option)", () => {
     const s0 = createGame({ gameId: "g", players: [{ id: "p1", name: "A" }, { id: "p2", name: "B" }] });

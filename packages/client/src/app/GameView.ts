@@ -243,6 +243,7 @@ export class GameView {
         elem("div", `margin-top:5px;padding-top:5px;border-top:1px solid ${theme.line};display:flex;flex-direction:column;gap:5px`, { children: [
           this.legendItem(`width:12px;height:12px;border:2.5px solid ${theme.brassBright};border-radius:50%`, "your legion can act"),
           this.legendItem(`width:12px;height:12px;border:2.5px solid ${theme.verdigris};border-radius:50%`, "reachable now"),
+          this.legendItem(`width:12px;height:12px;border:2.5px solid ${theme.warn};border-radius:50%`, "attack — enemy there, battle follows"),
           this.legendItem(`width:12px;height:12px;border:2.5px solid ${theme.accentBright};border-radius:50%`, "selected legion"),
         ] }),
         elem("div", `margin-top:3px;font-size:10px;color:${theme.dim}`, { text: "hover a land → its exits · scroll/drag to zoom & pan" }),
@@ -709,11 +710,15 @@ export class GameView {
     } else {
       this.board.setVisible(true);
       this.battle?.setVisible(false);
+      const seat = this.session.focusedSeat;
       const legion = this.session.getSelection().legion;
       const land = legion && v.legions[legion] ? v.legions[legion]!.land : null;
-      // Highlight a selected legion's legal destinations during Movement.
-      const reach = legion ? new Set(reachableLands(v, this.session.focusedSeat, legion)) : new Set<number>();
-      this.board.render(v, land, null, reach, this.attentionLands(v));
+      // Highlight a selected legion's legal destinations during Movement; the
+      // ones holding an enemy legion are attacks (movement ends there → battle).
+      const reach = legion ? new Set(reachableLands(v, seat, legion)) : new Set<number>();
+      const enemyLands = new Set(Object.values(v.legions).filter((l) => l.ownerId !== seat).map((l) => l.land));
+      const engage = new Set([...reach].filter((d) => enemyLands.has(d)));
+      this.board.render(v, land, null, reach, this.attentionLands(v), engage);
     }
   }
 
@@ -723,6 +728,15 @@ export class GameView {
     const out = new Set<number>();
     if (!seatActsNow(v, this.session.focusedSeat)) return out;
     const p = v.fsm.path;
+    if (p.endsWith("Engagement.Choosing")) {
+      // The contested lands ARE the to-do list: tap one to open the clash.
+      const owners = new Map<number, Set<string>>();
+      for (const l of Object.values(v.legions)) {
+        (owners.get(l.land) ?? owners.set(l.land, new Set()).get(l.land)!).add(l.ownerId);
+      }
+      for (const [landId, set] of owners) if (set.size >= 2) out.add(landId);
+      return out;
+    }
     for (const l of seatLegions(v, this.session.focusedSeat)) {
       if (p.endsWith("Commencement") && l.height >= 4) out.add(l.land);
       else if (p.endsWith("Movement") && !l.moved && l.destinations.length > 0) out.add(l.land);

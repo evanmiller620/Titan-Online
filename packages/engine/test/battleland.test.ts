@@ -333,9 +333,10 @@ describe("battleland entry", () => {
     assert.equal(attackerSideForApproach(3), "BOTTOM"); // wraps
   });
 
-  it("Tower: attacker lower-left, defender deployed inside the walls", () => {
+  it("Tower: attacker funnels through the bottom row, defender deployed inside the walls", () => {
     const tower = BATTLE_MAPS.Tower!;
-    assert.deepEqual(attackerEntryHexes(tower, "BOTTOM"), ATTACKER_SIDES.LEFT);
+    assert.deepEqual(attackerEntryHexes(tower, "BOTTOM"), ATTACKER_SIDES.BOTTOM);
+    assert.deepEqual([...ATTACKER_SIDES.BOTTOM], ["A1", "B1", "C1", "D1"]); // §6.1
     assert.deepEqual([...defenderEntryHexes(tower, "BOTTOM")].sort(),
       ["C3", "C4", "D3", "D4", "D5", "E3", "E4"]);
   });

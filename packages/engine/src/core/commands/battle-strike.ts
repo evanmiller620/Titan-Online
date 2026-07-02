@@ -34,9 +34,11 @@ import {
   type StrikeInputs,
 } from "../../combat/strike.ts";
 import { carryOverAllowed, meleeStrikeMods } from "../../combat/hazards.ts";
+import { planRangestrike } from "../../combat/rangestrike.ts";
 import { slayThreshold } from "../../combat/battle.ts";
 import { indexMap } from "../../battleland/terrain.ts";
 import { battleMapFor } from "../../battleland/maps.data.ts";
+import type { BattleContext } from "../../state/GameState.ts";
 
 export interface StrikePayload {
   readonly strikerId: string;
@@ -205,6 +207,144 @@ export class StrikeCommand extends BaseCommand<StrikePayload> {
       carriedTo: this.payload.carryToId ?? null,
     });
   }
+}
+
+// ---------------------------------------------------------------------------
+// Rangestrike (§12) — a ranged attack during the ACTIVE side's Strike phase.
+// ---------------------------------------------------------------------------
+
+export interface RangestrikePayload {
+  readonly strikerId: string;
+  readonly targetId: string;
+}
+
+export class RangestrikeCommand extends BaseCommand<RangestrikePayload> {
+  static readonly TYPE = "Rangestrike";
+  override readonly type = RangestrikeCommand.TYPE;
+
+  override validate(state: GameState): ValidationResult {
+    // §12: only the MOVING (active) player rangestrikes — never in Strikeback.
+    if (!matches(state.fsm, `${Scope.BattleRound}.Strike`)) {
+      return invalid(ValidationCode.WRONG_PHASE, "rangestrikes happen in your Strike phase");
+    }
+    const battle = state.battle;
+    if (!battle) return invalid(ValidationCode.WRONG_PHASE, "no active battle");
+
+    const striker = battle.combatants.find((c) => c.id === this.payload.strikerId);
+    const target = battle.combatants.find((c) => c.id === this.payload.targetId);
+    if (!striker) return invalid(ValidationCode.UNKNOWN_COMBATANT, "no such striker");
+    if (!target) return invalid(ValidationCode.UNKNOWN_COMBATANT, "no such target");
+    if (striker.slain || target.slain) {
+      return invalid(ValidationCode.ILLEGAL_STRIKE, "striker or target already slain");
+    }
+    if (striker.side === target.side) {
+      return invalid(ValidationCode.ILLEGAL_STRIKE, "cannot rangestrike your own side");
+    }
+    if (striker.side !== battle.activeSide) {
+      return invalid(ValidationCode.ILLEGAL_STRIKE, "only the moving side may rangestrike");
+    }
+    const ownerOfSide =
+      striker.side === "attacker" ? battle.attackerPlayerId : battle.defenderPlayerId;
+    if (this.playerId !== ownerOfSide) {
+      return invalid(ValidationCode.NOT_ACTIVE_PLAYER, "not your strike phase");
+    }
+    if (striker.struckThisPhase) {
+      return invalid(ValidationCode.ILLEGAL_STRIKE, "that character already struck this phase");
+    }
+    if (!striker.hex || !target.hex) {
+      return invalid(ValidationCode.ILLEGAL_STRIKE, "striker or target not on the board");
+    }
+    if (cubeDistance(striker.hex, target.hex) < 2) {
+      return invalid(ValidationCode.ILLEGAL_STRIKE, "adjacent enemies are struck in melee, not rangestruck");
+    }
+    const plan = planRange(state, battle, striker, target);
+    if (!plan.ok) {
+      return invalid(ValidationCode.ILLEGAL_STRIKE, `rangestrike illegal: ${plan.reason}`);
+    }
+    return valid;
+  }
+
+  protected override apply(draft: Draft, rng: Rng, events: DomainEvent[]): void {
+    const battle = draft.battle!;
+    const striker = battle.combatants.find((c) => c.id === this.payload.strikerId)!;
+    const target = battle.combatants.find((c) => c.id === this.payload.targetId)!;
+    const plan = planRange(draft, battle, striker, target);
+    if (!plan.ok) return; // validate() guarantees legality; defensive only
+
+    const resolved = resolveStrike(plan.plan.inputs, rng);
+
+    let combatants: Combatant[] = battle.combatants.slice();
+    const threshold = slayThreshold(target.creature, scoreOf(draft, target.side, battle));
+    const toTarget = Math.min(resolved.hits, Math.max(0, threshold - target.damage));
+    // §12: rangestrikes NEVER carry over — excess hits are lost.
+    combatants = applyDamage(combatants, target.id, toTarget, threshold, events);
+    combatants = combatants.map((c) =>
+      c.id === striker.id ? { ...c, struckThisPhase: true } : c,
+    );
+
+    // First blood via rangestrike opens the same summon window as melee.
+    let firstKillHappened = battle.firstKillHappened;
+    let summonPending = battle.summonPending ?? false;
+    const killedDefender = events.some((e) => e.type === "CombatantSlain" && e.side === "defender");
+    if (striker.side === "attacker" && killedDefender && !battle.firstKillHappened) {
+      firstKillHappened = true;
+      const onBoardAttackers = combatants.filter((c) => c.side === "attacker" && !c.slain).length;
+      const angelAvailable =
+        onBoardAttackers < 7 &&
+        Object.values(draft.legions).some(
+          (l) =>
+            l.ownerId === battle.attackerPlayerId &&
+            l.marker !== battle.attackerLegion &&
+            l.creatures.some((c) => c === "Angel" || c === "Archangel"),
+        );
+      if (angelAvailable) summonPending = true;
+    }
+
+    draft.battle = { ...battle, combatants, firstKillHappened, summonPending };
+
+    events.push({
+      type: "StrikeResolved",
+      audience: PUBLIC,
+      strikerId: striker.id,
+      targetId: target.id,
+      dice: resolved.dice,
+      strikeNumber: resolved.strikeNumber,
+      rolls: resolved.rolls,
+      hits: resolved.hits,
+      carriedTo: null,
+    });
+  }
+}
+
+/** Shared legality/plan for a rangestrike against the live battle. */
+function planRange(
+  state: GameState,
+  battle: BattleContext,
+  striker: Combatant,
+  target: Combatant,
+) {
+  const grid = indexMap(battleMapFor(battle.terrain)!);
+  const occupied = new Set(
+    battle.combatants.filter((c) => !c.slain && c.hex).map((c) => cubeKeyOf(c.hex!)),
+  );
+  const inContact = battle.combatants.some(
+    (e) => e.side !== striker.side && !e.slain && e.hex && cubeDistance(striker.hex!, e.hex) === 1,
+  );
+  return planRangestrike({
+    grid,
+    attacker: striker.creature,
+    defender: target.creature,
+    from: striker.hex!,
+    to: target.hex!,
+    attackerInContact: inContact,
+    isOccupied: (c) => occupied.has(cubeKeyOf(c)),
+    attackerScore: scoreOf(state, striker.side, battle),
+    defenderScore: scoreOf(state, target.side, battle),
+  });
+}
+
+function cubeKeyOf(c: CubeCoord): string {
+  return `${c.x},${c.y},${c.z}`;
 }
 
 // ---------------------------------------------------------------------------

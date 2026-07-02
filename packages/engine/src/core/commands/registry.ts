@@ -32,7 +32,7 @@ import {
   TitanTeleportCommand,
 } from "./movement.ts";
 import { MusterCommand } from "./mustering.ts";
-import { StrikeCommand } from "./battle-strike.ts";
+import { RangestrikeCommand, StrikeCommand } from "./battle-strike.ts";
 import { SelectEngagementCommand, ResolveEngagementCommand } from "./engagement.ts";
 import {
   DeployLegionCommand,
@@ -88,6 +88,7 @@ register(TowerTeleportCommand.TYPE, TowerTeleportCommand);
 register(TitanTeleportCommand.TYPE, TitanTeleportCommand);
 register(MusterCommand.TYPE, MusterCommand);
 register(StrikeCommand.TYPE, StrikeCommand);
+register(RangestrikeCommand.TYPE, RangestrikeCommand);
 register(SelectEngagementCommand.TYPE, SelectEngagementCommand);
 register(ResolveEngagementCommand.TYPE, ResolveEngagementCommand);
 register(DeployLegionCommand.TYPE, DeployLegionCommand);

@@ -33,27 +33,23 @@ import type { BattleMap } from "./maps.data.ts";
 export type EntrySide = "BOTTOM" | "LEFT" | "RIGHT";
 
 /**
- * The three 4-hex-wide attacker entry sides, as label sets. These are the
- * three outer edges of the 27-hex board:
- *   BOTTOM = the number-1 row across the four central-bottom columns C,D,E + B
- *   LEFT   = the upper-left diagonal edge
- *   RIGHT  = the upper-right diagonal edge
- * (Faithful to the physical board's three wide sides.)
+ * The three 4-hex-wide attacker entry sides, as label sets — EXACTLY the
+ * deployment geometry in The Law of Titan §6.1 (docs/The_Law_of_Titan_Context.md):
+ *   Bottom attack: attacker A1 B1 C1 D1 · defender D6 E5 F4
+ *   Left attack:   attacker A3 B4 C5 D6 · defender D1 E1 F1
+ *   Right attack:  attacker F1 F2 F3 F4 · defender A1 A2 A3
  */
 export const ATTACKER_SIDES: Readonly<Record<EntrySide, readonly string[]>> = {
-  BOTTOM: ["B1", "C1", "D1", "E1"],
-  LEFT: ["A1", "A2", "A3", "B4"],
+  BOTTOM: ["A1", "B1", "C1", "D1"],
+  LEFT: ["A3", "B4", "C5", "D6"],
   RIGHT: ["F1", "F2", "F3", "F4"],
 };
 
-/** The 3-hex-wide defender side opposite each attacker side. */
+/** The 3-hex-wide defender side opposite each attacker side (§6.1). */
 export const DEFENDER_SIDES: Readonly<Record<EntrySide, readonly string[]>> = {
-  // Opposite BOTTOM is the top edge (3 of the tall upper hexes).
-  BOTTOM: ["C5", "D6", "E5"],
-  // Opposite LEFT is the lower-right edge.
-  LEFT: ["E1", "F1", "F2"],
-  // Opposite RIGHT is the lower-left edge.
-  RIGHT: ["A1", "B1", "C1"],
+  BOTTOM: ["D6", "E5", "F4"],
+  LEFT: ["D1", "E1", "F1"],
+  RIGHT: ["A1", "A2", "A3"],
 };
 
 /**
@@ -68,9 +64,10 @@ export function attackerSideForApproach(approachIndex: number): EntrySide {
   return sides[((approachIndex % 3) + 3) % 3]!;
 }
 
-/** The attacker's entry hex labels for a side (or Tower lower-left). */
+/** The attacker's entry hex labels for a side. Tower battles funnel the
+ *  attacker through the bottom row A1 B1 C1 D1 regardless of approach (§6.1). */
 export function attackerEntryHexes(map: BattleMap, side: EntrySide): readonly string[] {
-  if (map.tower) return ATTACKER_SIDES.LEFT; // §10.2 lower-left
+  if (map.tower) return ATTACKER_SIDES.BOTTOM;
   return ATTACKER_SIDES[side];
 }
 

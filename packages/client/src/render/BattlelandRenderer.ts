@@ -1,13 +1,17 @@
 /**
- * Battleland renderer (Titan client, render layer).
+ * Battleland renderer (Titan client, render layer) — the PHYSICAL board look.
  *
- * Draws one of the eleven 27-hex battle maps using the flat-top cube→pixel
- * projection. Each map is visually distinct: in-hex hazards (Brambles, Sand,
- * Bog, Drift, Tree, Volcano, Tower, …) get their own tint AND a small motif so
- * the terrain reads at a glance; elevation darkens the fill and shows a level
- * badge; and the hexside features (wall, cliff, slope, dune, river) are each
- * drawn in a distinct style. Combatants are placed from the redacted battle
- * state — a battle reveals both engaged legions, so creatures are shown openly.
+ * Each of the eleven 27-hex battle maps renders like the printed Titan
+ * battleland card:
+ *   - a board card washed in the masterboard terrain's colour, with the
+ *     terrain name printed along the top edge;
+ *   - cream hexes with dark rims; hazard hexes carry their full-hex art
+ *     (brambles, sand, bog, drift, trees, the volcano, tower stone);
+ *   - elevation shown as the printed brown hill tints, level number inset;
+ *   - hexside features drawn as the board prints them: slope TEETH pointing
+ *     uphill, a solid CLIFF band, crenellated WALLs, scalloped DUNEs;
+ *   - creatures as square counters — name, POWER bottom-left, SKILL
+ *     bottom-right — exactly like the cardboard chits.
  *
  * Pure render: reads a BattleContext, emits hex clicks; never mutates state.
  */
@@ -15,36 +19,38 @@
 import { Application, Container, Graphics, Text } from "pixi.js";
 import {
   BATTLE_MAPS,
+  CREATURE_STATS,
   type GameStateView,
   type CubeCoord,
 } from "@titan/engine";
 import { cubeToPixelFlat, hexCornersFlat, fitHexLayout, type HexLayout, type Point } from "./projection.ts";
-import { palette } from "../ui/tokens.ts";
+import { palette, terrainColor, type as typ } from "../ui/tokens.ts";
 
 const hex = (s: string) => parseInt(s.replace("#", ""), 16);
 
-/** In-hex hazard fills — distinct, terrain-evoking, within the heraldic palette. */
+const HEX_CREAM = "#EFE6CC"; // the printed board's pale hex field
+const HEX_RIM = "#241F19";
+
+/** Full-hex hazard fills, echoing the printed art. */
 const HAZARD_TINT: Record<string, string> = {
-  Plains: "#DAC78A", // dry grass
-  Brambles: "#6F7A37", // thorny olive
-  Sand: "#E2C079", // warm sand
-  Bog: "#4C4733", // dark mud
-  Drift: "#CBD9DF", // pale ice
-  Tree: "#2F4A2A", // dense forest (impassable)
-  Volcano: "#9A3A22", // lava rock (impassable)
-  Tower: "#8C8273", // grey stone
-  Lake: "#3E6B86", // water
-  Stone: "#7C7568", // bare rock
-  Abyss: "#1E1A24", // void
+  Plains: HEX_CREAM,
+  Brambles: "#7C8A44", // thorny green
+  Sand: "#E3C27E", // warm sand
+  Bog: "#5A5540", // dark mire
+  Drift: "#DDE7EA", // snow
+  Tree: "#3A5A34", // dense canopy (impassable)
+  Volcano: "#8F3320", // lava rock (impassable)
+  Tower: "#B9AE95", // dressed stone
+  Lake: "#4E7D9E",
+  Stone: "#8C8578",
+  Abyss: "#221D2A",
 };
 
-/** Hexside feature stroke colours. */
-const BORDER_COLOR: Record<string, string> = {
-  w: palette.brass, // wall
-  c: "#15120F", // cliff (near-black)
-  s: palette.verdigris, // slope
-  d: palette.brassBright, // dune
-  r: "#4E86A6", // river
+/** Elevation tints — the printed brown hill shades. */
+const ELEVATION_TINT: Record<number, string> = {
+  1: "#CDA86E",
+  2: "#B3854B",
+  3: "#996B38",
 };
 
 export interface BattlelandCallbacks {
@@ -72,49 +78,44 @@ export class BattlelandRenderer {
     const map = BATTLE_MAPS[battle.terrain];
     if (!map) return;
 
-    // Size the board to its ACTUAL hex extent within the live canvas, centred —
-    // so it fills the board area without overflowing or hiding under a panel.
     const r = this.app.renderer as { width?: number; height?: number } | undefined;
     const w = r?.width || this.app.screen?.width || 800;
     const h = r?.height || this.app.screen?.height || 600;
-    this.layout = fitHexLayout(map.hexes.map((hx) => hx.cube), w, h, Math.min(w, h) * 0.06);
+    this.layout = fitHexLayout(map.hexes.map((hx) => hx.cube), w, h, Math.min(w, h) * 0.1);
     const s = this.layout.size;
 
-    // Pass 1: hex bodies (fill + rim), hazard motif, elevation badge, label.
+    this.drawBoardCard(map.hexes.map((hx) => hx.cube), battle.terrain, s);
+
+    // Pass 1: hex bodies — cream field / hazard art / elevation tint + rims.
     for (const hxd of map.hexes) {
       const center = cubeToPixelFlat(hxd.cube, this.layout);
-      const corners = hexCornersFlat(center, s * 0.93);
+      const corners = hexCornersFlat(center, s * 0.96);
       const poly: number[] = [];
       for (const c of corners) poly.push(c.x, c.y);
 
-      const tint = hex(HAZARD_TINT[hxd.terrain] ?? HAZARD_TINT.Plains!);
-      const fill = shade(tint, 1 - hxd.elevation * 0.13);
+      const fill = hxd.elevation > 0 && hxd.terrain === "Plains"
+        ? hex(ELEVATION_TINT[hxd.elevation] ?? ELEVATION_TINT[3]!)
+        : hex(HAZARD_TINT[hxd.terrain] ?? HEX_CREAM);
 
       const g = new Graphics();
-      g.poly(poly).fill({ color: fill, alpha: 1 }).stroke({ color: hex(palette.parchmentEdge), width: 1, alpha: 0.7 });
-      // Elevation lift: a light top highlight + dark lower shade for a 3D read.
-      if (hxd.elevation > 0) {
-        g.poly([corners[5]!.x, corners[5]!.y, corners[0]!.x, corners[0]!.y, corners[1]!.x, corners[1]!.y])
-          .stroke({ color: hex("#FFFFFF"), width: 1.5, alpha: 0.12 + hxd.elevation * 0.05 });
-      }
+      g.poly(poly).fill({ color: fill }).stroke({ color: hex(HEX_RIM), width: Math.max(1.5, s * 0.05) });
       this.layer.addChild(g);
 
-      this.drawHazardMotif(hxd.terrain, center, s);
-      if (hxd.elevation > 0) this.drawElevationBadge(center, s, hxd.elevation);
+      this.drawHazardArt(hxd.terrain, center, s);
+      if (hxd.elevation > 0) this.drawElevationNumber(center, s, hxd.elevation, hxd.terrain);
 
-      // Hex coordinate label, faint, tucked at the bottom.
       const label = new Text({
         text: hxd.label,
-        style: { fontFamily: "monospace", fontSize: s * 0.22, fill: hex(palette.inkSoft), fontWeight: "600" },
+        style: { fontFamily: typ.mono, fontSize: s * 0.18, fill: hex("#4A453C"), fontWeight: "600" },
       });
       label.anchor.set(0.5);
       label.x = center.x;
-      label.y = center.y + s * 0.62;
-      label.alpha = 0.65;
+      label.y = center.y + s * 0.68;
+      label.alpha = 0.55;
       this.layer.addChild(label);
     }
 
-    // Pass 2: hexside features on top of the fills, each in a distinct style.
+    // Pass 2: hexside features, printed-board style.
     for (const hxd of map.hexes) {
       const center = cubeToPixelFlat(hxd.cube, this.layout);
       for (const b of hxd.borders) {
@@ -130,70 +131,28 @@ export class BattlelandRenderer {
       if (!cube) continue;
       const p = cubeToPixelFlat(cube, this.layout);
       this.layer.addChild(new Graphics()
-        .poly(hexPolyPoints(p, s * 0.78))
-        .fill({ color: hex(palette.brassBright), alpha: 0.16 })
-        .stroke({ color: hex(palette.brassBright), width: 2.5, alpha: 0.9 }));
-      this.layer.addChild(new Graphics().circle(p.x, p.y, s * 0.12).fill({ color: hex(palette.brassBright), alpha: 0.55 }));
+        .poly(hexPolyPoints(p, s * 0.8))
+        .fill({ color: hex(palette.brassBright), alpha: 0.18 })
+        .stroke({ color: hex(palette.brassBright), width: 2.5, alpha: 0.95 }));
     }
 
-    // Pass 3: combatants (battle reveals both legions → creatures shown openly).
-    const rad = s * 0.5;
+    // Pass 3: creature counters (battle reveals both legions).
     for (const c of battle.combatants) {
       if (c.slain || !c.hex) continue;
-      const center = cubeToPixelFlat(c.hex, this.layout);
-      const isSel = c.id === selected;
-      const fill = c.side === "attacker" ? palette.oxblood : palette.verdigris;
-
-      if (isSel) {
-        this.layer.addChild(new Graphics()
-          .circle(center.x, center.y, rad + s * 0.14)
-          .stroke({ color: hex(palette.brassBright), width: 3, alpha: 0.9 }));
-      }
-
-      const disc = new Graphics();
-      disc.circle(center.x + rad * 0.12, center.y + rad * 0.16, rad).fill({ color: hex("#000000"), alpha: 0.25 });
-      disc
-        .circle(center.x, center.y, rad)
-        .fill({ color: hex(fill) })
-        .stroke({ color: isSel ? hex(palette.brassBright) : hex(palette.vellum), width: isSel ? 3 : 1.5 });
-      this.layer.addChild(disc);
-
-      const name = new Text({
-        text: abbrev(c.creature),
-        style: { fontFamily: "sans-serif", fontSize: s * 0.32, fill: hex(palette.vellum), fontWeight: "700", stroke: { color: hex("#1A1714"), width: 1 } },
-      });
-      name.anchor.set(0.5);
-      name.x = center.x;
-      name.y = center.y;
-      this.layer.addChild(name);
-
-      if (c.damage > 0) {
-        const bx = center.x + rad * 0.78, by = center.y - rad * 0.78, br = s * 0.22;
-        this.layer.addChild(new Graphics().circle(bx, by, br)
-          .fill({ color: hex(palette.alarm) }).stroke({ color: hex(palette.vellum), width: 1.5 }));
-        const dmg = new Text({
-          text: String(c.damage),
-          style: { fontFamily: "monospace", fontSize: s * 0.26, fontWeight: "700", fill: hex(palette.vellum) },
-        });
-        dmg.anchor.set(0.5);
-        dmg.x = bx;
-        dmg.y = by;
-        this.layer.addChild(dmg);
-      }
+      this.drawCounter(view, battle, c, s, c.id === selected);
     }
 
     // Pass 4: pending deployment placements + a chosen target marker.
-    const byLabel = new Map(map.hexes.map((hxd) => [hxd.label, hxd.cube]));
     for (const label of pendingHexes) {
-      const cube = byLabel.get(label);
+      const cube = byLabelAll.get(label);
       if (!cube) continue;
       const p = cubeToPixelFlat(cube, this.layout);
-      this.layer.addChild(new Graphics().circle(p.x, p.y, s * 0.5)
+      this.layer.addChild(new Graphics().roundRect(p.x - s * 0.42, p.y - s * 0.42, s * 0.84, s * 0.84, s * 0.1)
         .fill({ color: hex(palette.oxblood), alpha: 0.4 })
         .stroke({ color: hex(palette.brassBright), width: 2 }));
     }
     if (markHex) {
-      const cube = byLabel.get(markHex);
+      const cube = byLabelAll.get(markHex);
       if (cube) {
         const p = cubeToPixelFlat(cube, this.layout);
         this.layer.addChild(new Graphics().circle(p.x, p.y, s * 0.55)
@@ -202,151 +161,265 @@ export class BattlelandRenderer {
     }
   }
 
-  /** A small motif at the hex centre that distinguishes the hazard at a glance. */
-  private drawHazardMotif(terrain: string, c: Point, s: number): void {
+  /** The board "card": a rounded panel in the masterboard terrain colour with
+   *  the battleland's name printed along the top — like the physical board. */
+  private drawBoardCard(cubes: readonly CubeCoord[], terrain: string, s: number): void {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const c of cubes) {
+      const p = cubeToPixelFlat(c, this.layout);
+      minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+      minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+    }
+    const pad = s * 1.55;
+    const x = minX - pad, y = minY - pad, w = maxX - minX + 2 * pad, hgt = maxY - minY + 2 * pad;
+    const base = terrainColor[terrain] ?? terrainColor.Plains!;
+
+    const g = new Graphics();
+    g.roundRect(x + s * 0.08, y + s * 0.1, w, hgt, s * 0.35).fill({ color: hex("#000000"), alpha: 0.35 });
+    g.roundRect(x, y, w, hgt, s * 0.35)
+      .fill({ color: hex(base) })
+      .stroke({ color: hex(HEX_RIM), width: Math.max(2, s * 0.06) });
+    // Inner keyline, like the printed frame.
+    g.roundRect(x + s * 0.16, y + s * 0.16, w - s * 0.32, hgt - s * 0.32, s * 0.26)
+      .stroke({ color: hex(HEX_RIM), width: 1, alpha: 0.45 });
+    this.layer.addChild(g);
+
+    // Name printed in the top-left corner, clear of the tallest hex column —
+    // as on the physical battleland cards.
+    const title = new Text({
+      text: terrain.toUpperCase(),
+      style: {
+        fontFamily: typ.display, fontSize: s * 0.4, fontWeight: "700", letterSpacing: 2.5,
+        fill: hex(HEX_RIM),
+      },
+    });
+    title.anchor.set(0, 0.5);
+    title.x = x + s * 0.5;
+    title.y = y + s * 0.48;
+    title.alpha = 0.85;
+    this.layer.addChild(title);
+  }
+
+  /** Full-hex hazard art in the spirit of the printed board. */
+  private drawHazardArt(terrain: string, c: Point, s: number): void {
     const g = new Graphics();
     const { x, y } = c;
     switch (terrain) {
-      case "Brambles": {
-        const col = hex("#2C3717");
-        for (const dx of [-0.26, 0, 0.26]) {
-          g.moveTo(x + dx * s - 0.1 * s, y - 0.16 * s).lineTo(x + dx * s + 0.1 * s, y + 0.16 * s);
-          g.moveTo(x + dx * s + 0.1 * s, y - 0.16 * s).lineTo(x + dx * s - 0.1 * s, y + 0.16 * s);
+      case "Brambles": { // thorny scrub: scattered dark asterisks
+        const col = hex("#33421C");
+        for (const [dx, dy] of [[-0.3, -0.2], [0.1, -0.34], [0.34, -0.05], [-0.12, 0.06], [0.2, 0.3], [-0.34, 0.3]] as const) {
+          const px = x + dx * s, py = y + dy * s, rr = s * 0.09;
+          g.moveTo(px - rr, py).lineTo(px + rr, py);
+          g.moveTo(px - rr * 0.6, py - rr * 0.8).lineTo(px + rr * 0.6, py + rr * 0.8);
+          g.moveTo(px + rr * 0.6, py - rr * 0.8).lineTo(px - rr * 0.6, py + rr * 0.8);
         }
-        g.stroke({ color: col, width: Math.max(1, s * 0.045), alpha: 0.5 });
+        g.stroke({ color: col, width: Math.max(1, s * 0.035), alpha: 0.7 });
         break;
       }
-      case "Sand": {
-        for (const [dx, dy] of [[-0.26, -0.08], [0, -0.2], [0.26, -0.04], [-0.13, 0.18], [0.18, 0.16]] as const) {
-          g.circle(x + dx * s, y + dy * s, s * 0.05).fill({ color: hex("#A07E3C"), alpha: 0.55 });
+      case "Sand": { // stippled dunes
+        for (const [dx, dy] of [[-0.3, -0.12], [0, -0.26], [0.3, -0.08], [-0.16, 0.16], [0.16, 0.2], [0.34, 0.34], [-0.34, 0.36]] as const) {
+          g.circle(x + dx * s, y + dy * s, s * 0.045).fill({ color: hex("#A67F35"), alpha: 0.55 });
         }
         break;
       }
-      case "Bog": {
-        for (const dy of [-0.1, 0.08]) {
-          g.moveTo(x - 0.28 * s, y + dy * s);
-          for (let i = 1; i <= 4; i++) g.lineTo(x - 0.28 * s + i * 0.14 * s, y + dy * s + (i % 2 ? 0.06 : -0.06) * s);
+      case "Bog": { // murky pools
+        g.ellipse(x - 0.14 * s, y - 0.05 * s, s * 0.2, s * 0.11).fill({ color: hex("#3B3827"), alpha: 0.8 });
+        g.ellipse(x + 0.18 * s, y + 0.18 * s, s * 0.14, s * 0.08).fill({ color: hex("#3B3827"), alpha: 0.8 });
+        g.ellipse(x + 0.12 * s, y - 0.26 * s, s * 0.1, s * 0.055).fill({ color: hex("#3B3827"), alpha: 0.7 });
+        break;
+      }
+      case "Drift": { // snow crystals
+        for (const [dx, dy] of [[-0.2, -0.16], [0.22, 0.02], [-0.05, 0.26]] as const) {
+          const px = x + dx * s, py = y + dy * s, rr = s * 0.11;
+          for (let i = 0; i < 3; i++) {
+            const a = (Math.PI / 3) * i;
+            g.moveTo(px - Math.cos(a) * rr, py - Math.sin(a) * rr).lineTo(px + Math.cos(a) * rr, py + Math.sin(a) * rr);
+          }
         }
-        g.stroke({ color: hex("#221F12"), width: Math.max(1, s * 0.04), alpha: 0.5 });
+        g.stroke({ color: hex("#FFFFFF"), width: Math.max(1, s * 0.035), alpha: 0.85 });
         break;
       }
-      case "Drift": {
-        for (let i = 0; i < 3; i++) {
-          const a = (Math.PI / 3) * i;
-          g.moveTo(x - Math.cos(a) * 0.26 * s, y - Math.sin(a) * 0.26 * s)
-            .lineTo(x + Math.cos(a) * 0.26 * s, y + Math.sin(a) * 0.26 * s);
-        }
-        g.stroke({ color: hex("#F4FAFE"), width: Math.max(1, s * 0.04), alpha: 0.7 });
+      case "Tree": { // one big canopy filling the hex
+        g.circle(x, y - 0.08 * s, s * 0.34).fill({ color: hex("#274423"), alpha: 0.95 });
+        g.circle(x - 0.22 * s, y + 0.06 * s, s * 0.22).fill({ color: hex("#2E5029"), alpha: 0.95 });
+        g.circle(x + 0.22 * s, y + 0.06 * s, s * 0.22).fill({ color: hex("#2E5029"), alpha: 0.95 });
+        g.rect(x - 0.06 * s, y + 0.2 * s, 0.12 * s, 0.24 * s).fill({ color: hex("#4A3320") });
         break;
       }
-      case "Tree": {
-        g.poly([x, y - 0.36 * s, x - 0.26 * s, y + 0.14 * s, x + 0.26 * s, y + 0.14 * s]).fill({ color: hex("#1E3A1A"), alpha: 0.9 });
-        g.poly([x, y - 0.12 * s, x - 0.2 * s, y + 0.26 * s, x + 0.2 * s, y + 0.26 * s]).fill({ color: hex("#234720"), alpha: 0.9 });
-        g.rect(x - 0.05 * s, y + 0.24 * s, 0.1 * s, 0.12 * s).fill({ color: hex("#3A2A19"), alpha: 0.9 });
+      case "Volcano": { // the caldera
+        g.circle(x, y, s * 0.34).stroke({ color: hex("#5A1F12"), width: s * 0.09 });
+        g.circle(x, y, s * 0.18).fill({ color: hex("#E8742E") });
+        g.circle(x, y, s * 0.08).fill({ color: hex("#F6C453") });
         break;
       }
-      case "Volcano": {
-        g.poly([x - 0.32 * s, y + 0.24 * s, x - 0.1 * s, y - 0.3 * s, x + 0.1 * s, y - 0.3 * s, x + 0.32 * s, y + 0.24 * s])
-          .fill({ color: hex("#5A2018"), alpha: 0.92 });
-        g.poly([x - 0.1 * s, y - 0.3 * s, x + 0.1 * s, y - 0.3 * s, x + 0.04 * s, y - 0.18 * s, x - 0.04 * s, y - 0.18 * s])
-          .fill({ color: hex("#E8742E"), alpha: 0.95 });
-        g.circle(x, y - 0.3 * s, s * 0.07).fill({ color: hex("#F4B142"), alpha: 0.95 });
-        break;
-      }
-      case "Tower": {
-        const wpx = 0.46 * s;
-        g.rect(x - wpx / 2, y - 0.06 * s, wpx, 0.3 * s).fill({ color: hex("#CFC6AD"), alpha: 0.75 });
-        for (let i = 0; i < 3; i++) {
-          g.rect(x - wpx / 2 + i * (wpx / 3), y - 0.16 * s, wpx / 5, 0.1 * s).fill({ color: hex("#CFC6AD"), alpha: 0.75 });
-        }
+      case "Tower": { // flagstone joints
+        const col = hex("#7A7160");
+        g.moveTo(x - 0.4 * s, y - 0.14 * s).lineTo(x + 0.4 * s, y - 0.14 * s);
+        g.moveTo(x - 0.4 * s, y + 0.14 * s).lineTo(x + 0.4 * s, y + 0.14 * s);
+        for (const dx of [-0.2, 0.1, 0.32]) g.moveTo(x + dx * s, y - 0.14 * s).lineTo(x + dx * s, y + 0.14 * s);
+        g.stroke({ color: col, width: Math.max(1, s * 0.03), alpha: 0.7 });
         break;
       }
       case "Lake": {
-        for (const dy of [-0.06, 0.12]) {
-          g.moveTo(x - 0.26 * s, y + dy * s);
-          for (let i = 1; i <= 4; i++) g.lineTo(x - 0.26 * s + i * 0.13 * s, y + dy * s + (i % 2 ? 0.05 : -0.05) * s);
+        for (const dy of [-0.08, 0.1]) {
+          g.moveTo(x - 0.28 * s, y + dy * s);
+          for (let i = 1; i <= 4; i++) g.lineTo(x - 0.28 * s + i * 0.14 * s, y + dy * s + (i % 2 ? 0.05 : -0.05) * s);
         }
-        g.stroke({ color: hex("#BfE0F0"), width: Math.max(1, s * 0.04), alpha: 0.7 });
+        g.stroke({ color: hex("#BFE0F0"), width: Math.max(1, s * 0.04), alpha: 0.8 });
         break;
       }
       default:
-        return; // Plains and unused terrains: clean hex
+        return; // Plains: clean cream hex
     }
     this.layer.addChild(g);
   }
 
-  /** Small badge in the upper-left marking elevation level (▲1, ▲2 …). */
-  private drawElevationBadge(c: Point, s: number, elevation: number): void {
-    const bx = c.x - s * 0.42, by = c.y - s * 0.5;
-    const g = new Graphics();
-    g.roundRect(bx - s * 0.02, by - s * 0.12, s * 0.34, s * 0.24, s * 0.06)
-      .fill({ color: hex("#15120F"), alpha: 0.72 });
-    this.layer.addChild(g);
+  /** Elevation level, printed small near the hex top like the board's numbers. */
+  private drawElevationNumber(c: Point, s: number, elevation: number, terrain: string): void {
     const t = new Text({
-      text: `▲${elevation}`,
-      style: { fontFamily: "monospace", fontSize: s * 0.18, fontWeight: "700", fill: hex(palette.brassBright) },
+      text: String(elevation),
+      style: {
+        fontFamily: typ.mono, fontSize: s * 0.26, fontWeight: "700",
+        fill: hex(terrain === "Tower" ? "#4A453C" : "#6B4A22"),
+      },
     });
-    t.anchor.set(0, 0.5);
-    t.x = bx + s * 0.01;
-    t.y = by;
+    t.anchor.set(0.5);
+    t.x = c.x;
+    t.y = c.y - s * 0.56;
+    t.alpha = 0.9;
     this.layer.addChild(t);
   }
 
-  /** Draw one hexside feature in a style unique to its type. `a`,`c` are the two
-   *  edge corners; `center` is the hex centre (for inward direction). */
+  /** One hexside feature, drawn as the physical board prints it. `a`,`c` are
+   *  the edge corners; `center` the owning hex's centre (features point INTO
+   *  the hex that carries them — the higher/inner side). */
   private drawBorderFeature(a: Point, c: Point, center: Point, type: string, s: number): void {
     const g = new Graphics();
-    const col = hex(BORDER_COLOR[type] ?? palette.ink);
     const mid = { x: (a.x + c.x) / 2, y: (a.y + c.y) / 2 };
-    // inward unit (edge midpoint → centre)
     const inx = center.x - mid.x, iny = center.y - mid.y;
     const il = Math.hypot(inx, iny) || 1;
-    const nx = inx / il, ny = iny / il;
+    const nx = inx / il, ny = iny / il; // inward unit
+    const ex = (c.x - a.x), ey = (c.y - a.y);
+    const el = Math.hypot(ex, ey) || 1;
+    const tx = ex / el, ty = ey / el; // along-edge unit
 
     switch (type) {
-      case "w": { // wall — bold double line (battlement)
-        g.moveTo(a.x, a.y).lineTo(c.x, c.y).stroke({ color: col, width: s * 0.16, alpha: 1 });
-        g.moveTo(a.x + nx * s * 0.1, a.y + ny * s * 0.1).lineTo(c.x + nx * s * 0.1, c.y + ny * s * 0.1)
-          .stroke({ color: hex(palette.brassBright), width: s * 0.05, alpha: 0.9 });
-        break;
-      }
-      case "c": { // cliff — thick dark edge with inward hatch ticks
-        g.moveTo(a.x, a.y).lineTo(c.x, c.y).stroke({ color: col, width: s * 0.16, alpha: 1 });
-        for (const t of [0.25, 0.5, 0.75]) {
-          const px = a.x + (c.x - a.x) * t, py = a.y + (c.y - a.y) * t;
-          g.moveTo(px, py).lineTo(px + nx * s * 0.16, py + ny * s * 0.16).stroke({ color: col, width: s * 0.04, alpha: 0.8 });
+      case "s": { // SLOPE — a row of small teeth pointing uphill (inward)
+        const teeth = 3;
+        for (let i = 1; i <= teeth; i++) {
+          const t = i / (teeth + 1);
+          const bx = a.x + ex * t, by = a.y + ey * t;
+          const half = s * 0.09, len = s * 0.16;
+          g.poly([
+            bx - tx * half, by - ty * half,
+            bx + tx * half, by + ty * half,
+            bx + nx * len, by + ny * len,
+          ]).fill({ color: hex("#6B4A22"), alpha: 0.9 });
         }
         break;
       }
-      case "s": { // slope — line + a chevron pointing inward (uphill)
-        g.moveTo(a.x, a.y).lineTo(c.x, c.y).stroke({ color: col, width: s * 0.08, alpha: 0.95 });
-        const ex = (c.x - a.x) / (Math.hypot(c.x - a.x, c.y - a.y) || 1);
-        const ey = (c.y - a.y) / (Math.hypot(c.x - a.x, c.y - a.y) || 1);
-        const tip = { x: mid.x + nx * s * 0.16, y: mid.y + ny * s * 0.16 };
-        g.moveTo(tip.x - ex * s * 0.12, tip.y - ey * s * 0.12).lineTo(tip.x, tip.y)
-          .lineTo(tip.x + ex * s * 0.12, tip.y + ey * s * 0.12).stroke({ color: col, width: s * 0.05, alpha: 0.95 });
+      case "c": { // CLIFF — a solid black band
+        g.moveTo(a.x, a.y).lineTo(c.x, c.y).stroke({ color: hex("#15120F"), width: s * 0.14 });
         break;
       }
-      case "d": { // dune — dashed line
-        const segs = 5;
-        for (let i = 0; i < segs; i += 2) {
-          const t0 = i / segs, t1 = (i + 1) / segs;
-          g.moveTo(a.x + (c.x - a.x) * t0, a.y + (c.y - a.y) * t0)
-            .lineTo(a.x + (c.x - a.x) * t1, a.y + (c.y - a.y) * t1);
+      case "w": { // WALL — black band with crenellation blocks on the inner side
+        g.moveTo(a.x, a.y).lineTo(c.x, c.y).stroke({ color: hex("#26211A"), width: s * 0.11 });
+        for (const t of [0.22, 0.5, 0.78]) {
+          const bx = a.x + ex * t + nx * s * 0.07, by = a.y + ey * t + ny * s * 0.07;
+          const mw = s * 0.1;
+          g.rect(bx - mw / 2, by - mw / 2, mw, mw).fill({ color: hex("#26211A") });
         }
-        g.stroke({ color: col, width: s * 0.1, alpha: 0.95 });
         break;
       }
-      case "r": { // river — blue double thin line
-        g.moveTo(a.x, a.y).lineTo(c.x, c.y).stroke({ color: col, width: s * 0.12, alpha: 0.9 });
+      case "d": { // DUNE — scalloped arcs bulging into the sand side
+        const scallops = 3;
+        for (let i = 0; i < scallops; i++) {
+          const t0 = i / scallops, t1 = (i + 1) / scallops;
+          const p0 = { x: a.x + ex * t0, y: a.y + ey * t0 };
+          const p1 = { x: a.x + ex * t1, y: a.y + ey * t1 };
+          const cx = (p0.x + p1.x) / 2 + nx * s * 0.14, cy = (p0.y + p1.y) / 2 + ny * s * 0.14;
+          g.moveTo(p0.x, p0.y).quadraticCurveTo(cx, cy, p1.x, p1.y);
+        }
+        g.stroke({ color: hex("#8F6A25"), width: Math.max(1.5, s * 0.055) });
+        break;
+      }
+      case "r": { // RIVER — blue double line
+        g.moveTo(a.x, a.y).lineTo(c.x, c.y).stroke({ color: hex("#4E86A6"), width: s * 0.12, alpha: 0.9 });
         g.moveTo(a.x - nx * s * 0.05, a.y - ny * s * 0.05).lineTo(c.x - nx * s * 0.05, c.y - ny * s * 0.05)
           .stroke({ color: hex("#9FD0E6"), width: s * 0.04, alpha: 0.8 });
         break;
       }
       default:
-        g.moveTo(a.x, a.y).lineTo(c.x, c.y).stroke({ color: col, width: s * 0.08, alpha: 0.9 });
+        g.moveTo(a.x, a.y).lineTo(c.x, c.y).stroke({ color: hex(palette.ink), width: s * 0.08, alpha: 0.9 });
     }
     this.layer.addChild(g);
+  }
+
+  /** A creature as its cardboard counter: square chit, name across the middle,
+   *  POWER bottom-left, SKILL bottom-right, damage badge top-right. */
+  private drawCounter(
+    view: GameStateView,
+    battle: NonNullable<GameStateView["battle"]>,
+    c: NonNullable<GameStateView["battle"]>["combatants"][number],
+    s: number,
+    isSel: boolean,
+  ): void {
+    const center = cubeToPixelFlat(c.hex!, this.layout);
+    const half = s * 0.52;
+    const fill = c.side === "attacker" ? palette.oxblood : palette.verdigris;
+
+    const g = new Graphics();
+    g.roundRect(center.x - half + s * 0.05, center.y - half + s * 0.07, half * 2, half * 2, s * 0.1)
+      .fill({ color: hex("#000000"), alpha: 0.3 });
+    g.roundRect(center.x - half, center.y - half, half * 2, half * 2, s * 0.1)
+      .fill({ color: hex(fill) })
+      .stroke({ color: isSel ? hex(palette.brassBright) : hex(palette.vellum), width: isSel ? 3 : 1.5 });
+    this.layer.addChild(g);
+
+    const name = new Text({
+      text: abbrev(c.creature),
+      style: {
+        fontFamily: typ.body, fontSize: s * 0.26, fontWeight: "700",
+        fill: hex(palette.vellum), stroke: { color: hex("#1A1714"), width: 1 },
+      },
+    });
+    name.anchor.set(0.5);
+    name.x = center.x;
+    name.y = center.y - s * 0.1;
+    this.layer.addChild(name);
+
+    // Power bottom-left · skill bottom-right, exactly like the printed chit.
+    const pid = c.side === "attacker" ? battle.attackerPlayerId : battle.defenderPlayerId;
+    const score = (view.players[pid] as { score?: number } | undefined)?.score ?? 0;
+    const stats = CREATURE_STATS[c.creature as keyof typeof CREATURE_STATS];
+    const power = c.creature === "Titan" ? 6 + Math.floor(score / 100) : stats?.power ?? 0;
+    const corner = (text: string, dx: number, anchorX: number) => {
+      const t = new Text({
+        text,
+        style: { fontFamily: typ.mono, fontSize: s * 0.2, fontWeight: "700", fill: hex(palette.vellum) },
+      });
+      t.anchor.set(anchorX, 1);
+      t.x = center.x + dx;
+      t.y = center.y + half - s * 0.05;
+      t.alpha = 0.95;
+      this.layer.addChild(t);
+    };
+    corner(String(power), -half + s * 0.08, 0);
+    corner(String(stats?.skill ?? ""), half - s * 0.08, 1);
+
+    if (c.damage > 0) {
+      const bx = center.x + half - s * 0.06, by = center.y - half + s * 0.06, br = s * 0.16;
+      this.layer.addChild(new Graphics().circle(bx, by, br)
+        .fill({ color: hex(palette.alarm) }).stroke({ color: hex(palette.vellum), width: 1.5 }));
+      const dmg = new Text({
+        text: String(c.damage),
+        style: { fontFamily: typ.mono, fontSize: s * 0.2, fontWeight: "700", fill: hex(palette.vellum) },
+      });
+      dmg.anchor.set(0.5);
+      dmg.x = bx;
+      dmg.y = by;
+      this.layer.addChild(dmg);
+    }
   }
 
   /** Show or hide this board (the app toggles between master/battle boards). */
@@ -381,22 +454,14 @@ export class BattlelandRenderer {
 
   /** The two corner points of the edge in direction `dir`. */
   private edgeSegment(center: Point, dir: number): { a: Point; c: Point } {
-    const corners = hexCornersFlat(center, this.layout.size * 0.93);
+    const corners = hexCornersFlat(center, this.layout.size * 0.96);
     // Flat-top edge `dir` lies between corner dir and dir+1.
     return { a: corners[dir % 6]!, c: corners[(dir + 1) % 6]! };
   }
 }
 
-/** Darken a packed RGB color by factor (0..1). */
-function shade(color: number, factor: number): number {
-  const r = Math.round(((color >> 16) & 0xff) * factor);
-  const g = Math.round(((color >> 8) & 0xff) * factor);
-  const b = Math.round((color & 0xff) * factor);
-  return (r << 16) | (g << 8) | b;
-}
-
 function abbrev(creature: string): string {
-  return creature.slice(0, 3);
+  return creature.length <= 7 ? creature : creature.slice(0, 6) + "·";
 }
 
 /** Flat-top hexagon outline (flattened x,y pairs) for highlight rings. */

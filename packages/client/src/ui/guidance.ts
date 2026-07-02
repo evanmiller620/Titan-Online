@@ -72,7 +72,7 @@ export function currentGuidance(
     if (b.summonPending) return { title: "First blood!", detail: "Summon an Angel into the fight, or decline.", tone: "act" };
     if (p.endsWith("Deployment")) return { title: "Deploy your legion", detail: "Pick a unit, then tap a glowing hex.", tone: "act" };
     if (p.endsWith("Round.Maneuver")) return { title: "Maneuver your creatures", detail: "Move each up to its skill, then End maneuvers.", tone: "act" };
-    if (p.endsWith("Round.Strike")) return { title: "Strike!", detail: "Tap a creature, then an adjacent enemy. End strikes when done.", tone: "act" };
+    if (p.endsWith("Round.Strike")) return { title: "Strike!", detail: "Tap a creature, then an enemy — adjacent for melee, distant to rangestrike. Engaged creatures must strike.", tone: "act" };
     if (p.endsWith("Round.Strikeback")) return { title: "Strike back", detail: "Your survivors hit back, then End.", tone: "act" };
     return { title: phaseLabel(view), tone: "act" };
   }
@@ -92,8 +92,11 @@ export function currentGuidance(
     if (view.turn.movementRoll == null) return { title: "Roll the movement die", detail: "Press Roll to see how far you move.", tone: "act" };
     const roll = view.turn.movementRoll;
     return selection.legion
-      ? { title: `Move — rolled ${roll}`, detail: "Tap a glowing land to move there.", tone: "act" }
+      ? { title: `Move — rolled ${roll}`, detail: "Tap a glowing land to move there. A red-ringed land holds an enemy — landing there ends the move and starts a battle.", tone: "act" }
       : { title: `Move your legions — rolled ${roll}`, detail: "Tap a legion, then a glowing land. At least one must move.", tone: "act" };
+  }
+  if (p.endsWith("Engagement.Choosing")) {
+    return { title: "Enemies share a land!", detail: "Tap a contested land on the board to open that clash.", tone: "act" };
   }
   if (p.includes("Engagement")) {
     return { title: "Resolve the clash", detail: "Fight the battle, or settle by agreement.", tone: "act" };

@@ -181,6 +181,8 @@ export class MasterboardRenderer {
    *   selectedLand    banner ring (the selected legion's land)
    *   highlightLands  a selected legion's reachable set — lit while others dim
    *   attentionLands  lands whose legions can act this phase — brass ring
+   *   engageLands     reachable lands holding an ENEMY legion — landing there
+   *                   ends the move and forces a battle, so they ring as attacks
    */
   render(
     view: GameStateView,
@@ -188,6 +190,7 @@ export class MasterboardRenderer {
     _hoveredLand: number | null,
     highlightLands: ReadonlySet<number> = new Set(),
     attentionLands: ReadonlySet<number> = new Set(),
+    engageLands: ReadonlySet<number> = new Set(),
   ): void {
     this.syncExtent();
     this.base.removeChildren();
@@ -201,7 +204,10 @@ export class MasterboardRenderer {
       const isSel = land.id === selectedLand;
       const isReach = highlightLands.has(land.id);
       const dim = focusing && !isReach && !isSel;
-      this.drawTile(land, s, { dim, selected: isSel, reachable: isReach, attention: attentionLands.has(land.id) });
+      this.drawTile(land, s, {
+        dim, selected: isSel, reachable: isReach,
+        attention: attentionLands.has(land.id), engage: engageLands.has(land.id),
+      });
     }
 
     // Pass 2 — the painted gates, on top of every tile so they never get buried.
@@ -231,7 +237,7 @@ export class MasterboardRenderer {
   private drawTile(
     land: (typeof MASTER_LANDS)[number],
     s: number,
-    st: { dim: boolean; selected: boolean; reachable: boolean; attention: boolean },
+    st: { dim: boolean; selected: boolean; reachable: boolean; attention: boolean; engage: boolean },
   ): void {
     const fill = hex(terrainColor[land.terrain] ?? terrainColor.Plains!);
     const isTower = land.terrain === "Tower";
@@ -246,6 +252,11 @@ export class MasterboardRenderer {
     const ringPoly = flat(triLandPolygon(land, this.layout, TRUNC, SCALE * 0.94));
     if (st.selected) {
       g.poly(ringPoly).stroke({ color: hex(palette.oxbloodBright), width: 4 });
+    } else if (st.reachable && st.engage) {
+      // Attack destination: an enemy legion holds it — moving here ends the
+      // move and forces an engagement. Ringed in alarm, not verdigris.
+      g.poly(poly).fill({ color: hex(palette.alarm), alpha: 0.20 });
+      g.poly(ringPoly).stroke({ color: hex(palette.alarm), width: 3.5 });
     } else if (st.reachable) {
       g.poly(poly).fill({ color: hex(palette.verdigris), alpha: 0.18 });
       g.poly(ringPoly).stroke({ color: hex(palette.verdigris), width: 3.5 });
