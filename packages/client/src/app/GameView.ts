@@ -17,7 +17,9 @@ import { planMasterboardClick, planBattleClick, seatActsNow, battleBanner, seatL
 import { elem, txt, eyebrow, chip, button, input, iconButton, theme, surface } from "../ui/dom.ts";
 import { type as typ } from "../ui/tokens.ts";
 import { helpOverlay } from "../ui/Help.ts";
-import type { DomainEvent } from "@titan/engine";
+import { formatEvent, humanizeType } from "../ui/eventLog.ts";
+import { HAZARD_INFO, BORDER_INFO } from "../ui/battleInfo.ts";
+import { currentGuidance, phaseLabel } from "../ui/guidance.ts";
 
 export class GameView {
   private readonly session: GameSession;
@@ -34,6 +36,7 @@ export class GameView {
   private logEl!: HTMLElement;
   private devEl!: HTMLElement;
   private tooltip!: HTMLElement;
+  private turnBanner!: HTMLElement;
   private splitPick = new Set<number>(); // creature indices chosen for a new legion
   private splitFor: string | null = null; // which legion the pick applies to
   private readonly forceField = input("dice e.g. 6,6,1");
@@ -60,6 +63,7 @@ export class GameView {
     const boardEl = elem("div", "position:relative;flex:1;min-width:0");
     this.tooltip = elem("div", `position:absolute;pointer-events:none;display:none;z-index:8;padding:7px 10px;background:#181B20;color:${theme.ink};border:1px solid ${theme.brass};border-radius:${surface.radius.md};font-family:${typ.body};font-size:12px;max-width:220px;box-shadow:${surface.elevation.md}`);
     boardEl.appendChild(this.tooltip);
+    boardEl.appendChild(this.buildTurnBanner());
     boardEl.appendChild(this.boardLegend());
     boardEl.appendChild(this.boardControls());
     root.appendChild(boardEl);
@@ -70,7 +74,7 @@ export class GameView {
     this.phaseEl = elem("div", "display:flex;align-items:center;gap:4px;margin-bottom:14px");
     this.seatRow = elem("div", "display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px");
     this.bar = elem("div", "display:flex;flex-direction:column;gap:8px");
-    this.status = elem("div", `margin-top:12px;min-height:0;font-size:${typ.scale.sm};line-height:1.45`);
+    this.status = elem("div", "display:none");
     this.legionsEl = elem("div", "display:flex;flex-direction:column;gap:6px;margin-top:10px");
     this.devEl = elem("div", "display:flex;flex-direction:column;gap:6px;margin-top:10px");
     this.logEl = elem("div", `margin-top:8px;font-family:${typ.mono};font-size:11px;line-height:1.5;color:${theme.dim}`);
@@ -171,6 +175,39 @@ export class GameView {
     });
   }
 
+  /** The turn banner floats top-centre over the board: whose turn, which phase,
+   *  and exactly what to do — the one thing a player reads between clicks. */
+  private buildTurnBanner(): HTMLElement {
+    this.turnBanner = elem("div", [
+      "position:absolute;top:12px;left:50%;transform:translateX(-50%)",
+      "z-index:5;pointer-events:none;max-width:min(520px,70%)",
+      "padding:10px 18px;text-align:center",
+      "background:rgba(24,27,32,0.92)", `border:1px solid ${theme.brass}`,
+      `border-radius:${surface.radius.md}`, `box-shadow:${surface.elevation.md}`,
+    ].join(";"));
+    return this.turnBanner;
+  }
+
+  private renderTurnBanner(v: GameStateView | null): void {
+    if (!this.turnBanner) return;
+    if (!v) { this.turnBanner.style.display = "none"; return; }
+    this.turnBanner.style.display = "block";
+    const acts = seatActsNow(v, this.session.focusedSeat);
+    const g = currentGuidance(v, this.session.focusedSeat, this.session.getSelection(), acts);
+    const accent = g.tone === "act" ? theme.brassBright : g.tone === "wait" ? theme.dim : theme.verdigris;
+    this.turnBanner.style.borderColor = g.tone === "act" ? theme.brassBright : theme.brass;
+    const active = v.playerOrder[v.turn.activeIndex];
+    const activeColor = (v.players[active ?? ""] as { color?: string } | undefined)?.color ?? active ?? "";
+    const kids: HTMLElement[] = [
+      elem("div", `font-family:${typ.mono};font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:${theme.brass}`, {
+        text: v.fsm.path === "GameOver" ? "Game over" : `${activeColor}'s turn · ${phaseLabel(v)}`,
+      }),
+      elem("div", `font-family:${typ.body};font-size:15px;font-weight:700;line-height:1.3;color:${accent};margin-top:2px`, { text: g.title }),
+    ];
+    if (g.detail) kids.push(elem("div", `font-size:11.5px;color:${theme.dim};margin-top:2px;line-height:1.4`, { text: g.detail }));
+    this.turnBanner.replaceChildren(...kids);
+  }
+
   /** A small key pinned to the board corner — swaps between movement (master)
    *  and combatant (battle) modes via {@link updateLegend}. */
   private boardLegend(): HTMLElement {
@@ -191,14 +228,24 @@ export class GameView {
     if (inBattle) {
       this.buildBattleLegend(title);
     } else {
-      const arrow = (c: string) => `width:0;height:0;border-top:5px solid transparent;border-bottom:5px solid transparent;border-left:10px solid ${c}`;
+      const glyph = (t: string, label: string) => elem("div", "display:flex;align-items:center;gap:7px", {
+        children: [
+          elem("span", "flex:0 0 22px;font-size:11px;letter-spacing:-1px;color:#F2EAD3;text-align:center", { text: t }),
+          txt(label, theme.dim, "11px"),
+        ],
+      });
       this.legendEl.replaceChildren(
-        title("Connections"),
-        this.legendItem(arrow(theme.brassBright), "triangle — track, move this way"),
-        this.legendItem(`width:11px;height:11px;border-radius:4px;background:${theme.verdigris}`, "rounded square — gateway"),
-        this.legendItem(`width:11px;height:11px;background:${theme.warn}`, "square — forced block"),
-        this.legendItem(`width:12px;height:12px;border:2px solid ${theme.verdigris};border-radius:2px`, "reachable now"),
-        elem("div", `margin-top:3px;font-size:10px;color:${theme.dim}`, { text: "markers sit on each land's edge · hover for bold exits · scroll/drag to zoom & pan" }),
+        title("Board gates"),
+        glyph("▸▸▸", "track — the normal flow"),
+        glyph("▸", "tower / summit link"),
+        glyph("◠", "arch — pass or stop, both ways"),
+        glyph("▬", "block — exit only, no entry"),
+        elem("div", `margin-top:5px;padding-top:5px;border-top:1px solid ${theme.line};display:flex;flex-direction:column;gap:5px`, { children: [
+          this.legendItem(`width:12px;height:12px;border:2.5px solid ${theme.brassBright};border-radius:50%`, "your legion can act"),
+          this.legendItem(`width:12px;height:12px;border:2.5px solid ${theme.verdigris};border-radius:50%`, "reachable now"),
+          this.legendItem(`width:12px;height:12px;border:2.5px solid ${theme.accentBright};border-radius:50%`, "selected legion"),
+        ] }),
+        elem("div", `margin-top:3px;font-size:10px;color:${theme.dim}`, { text: "hover a land → its exits · scroll/drag to zoom & pan" }),
       );
     }
   }
@@ -284,14 +331,12 @@ export class GameView {
   }
 
   private async submit(dto: CommandDTO): Promise<void> {
-    this.status.textContent = `submitting ${dto.type}…`;
-    this.status.style.color = theme.brassBright;
+    this.setStatus(`submitting ${humanizeType(dto.type)}…`, "info");
     const r = await this.session.submit(dto);
     if (!r.ok) {
-      this.status.textContent = `✕ ${dto.type}: ${r.message}`;
-      this.status.style.color = theme.warn;
+      this.setStatus(`✕ ${r.message}`, "warn");
     } else {
-      this.status.textContent = "";
+      this.setStatus("", "info");
       const v = this.session.view();
       const actor = (v?.players?.[dto.playerId] as { color?: string } | undefined)?.color ?? dto.playerId;
       const lines = this.session.lastEvents().map(formatEvent).filter((l) => l.length > 0);
@@ -356,10 +401,20 @@ export class GameView {
     });
   }
 
-  /** Transient status message. */
-  private flash(msg: string, color: string): void {
+  /** Transient status message, styled as a tone pill. */
+  private setStatus(msg: string, tone: "good" | "warn" | "info"): void {
+    if (!msg) { this.status.style.display = "none"; this.status.textContent = ""; return; }
+    const c = tone === "good" ? theme.good : tone === "warn" ? theme.warn : theme.brassBright;
     this.status.textContent = msg;
-    this.status.style.color = color;
+    this.status.style.cssText = [
+      "display:block", "margin-top:12px", "padding:8px 11px", `border-radius:${surface.radius.sm}`,
+      `font-size:${typ.scale.sm}`, "line-height:1.4", `color:${c}`,
+      `background:${theme.bgDeep}`, `border:1px solid ${theme.line}`, `border-left:3px solid ${c}`,
+    ].join(";");
+  }
+  /** Back-compat shim for dev tools that pass a colour. */
+  private flash(msg: string, color: string): void {
+    this.setStatus(msg, color === theme.good ? "good" : color === theme.warn ? "warn" : "info");
   }
 
   private render(): void {
@@ -372,6 +427,7 @@ export class GameView {
     this.renderLegions(v);
     this.renderDev();
     this.renderBoard(v);
+    this.renderTurnBanner(v);
     this.renderLog();
     this.applyCollapse();
     this.maybeFastplay();
@@ -522,26 +578,41 @@ export class GameView {
 
   private renderBar(): void {
     const v = this.session.view();
-    const banner = v && v.battle ? battleBanner(v) : null;
     const actions = this.session.actions();
-    const kids: HTMLElement[] = [];
-    if (banner) kids.push(txt(banner, theme.brassBright, typ.scale.sm));
+    const kids: HTMLElement[] = [this.guidanceBanner(v)];
+
+    // Live battle context (round / side) sits just under the prompt.
+    if (v?.battle) { const banner = battleBanner(v); if (banner) kids.push(txt(banner, theme.brass, "11px")); }
+
     const dc = v ? this.deployContext(v) : null;
     if (dc) for (const el of this.renderDeployPicker(dc)) kids.push(el);
-    if (v && !v.battle && v.fsm.path.endsWith("Movement") && v.turn.movementRoll != null) {
-      kids.push(txt(`Rolled: ${v.turn.movementRoll}`, theme.brassBright, typ.scale.lg));
-    }
-    // Discoverability hints for the select-then-act phases.
-    if (v && !this.session.getSelection().legion) {
-      if (v.fsm.path.endsWith("Commencement")) kids.push(txt("Tap a legion below to split it, or End splits.", theme.dim, "11px"));
-      else if (v.fsm.path.endsWith("Mustering")) kids.push(txt("Tap a legion that moved (below) to recruit, or End turn.", theme.dim, "11px"));
-    }
-    if (actions.length === 0) kids.push(txt("No actions for this seat now.", theme.dim));
+
     for (const a of actions) {
       kids.push(button(a.label, { full: true, primary: a.primary === true, onClick: () => void this.submit(a.dto) }));
       if (a.hint) kids.push(elem("div", `font-size:11px;color:${theme.dim};margin:-2px 0 2px`, { text: a.hint }));
     }
     this.bar.replaceChildren(...kids);
+  }
+
+  /** A prominent contextual prompt — what the player should do right now,
+   *  driven by the pure guidance engine. Replaces the old scattered hints. */
+  private guidanceBanner(v: GameStateView | null): HTMLElement {
+    const g = currentGuidance(v, this.session.focusedSeat, this.session.getSelection(), v ? seatActsNow(v, this.session.focusedSeat) : false);
+    const accent = g.tone === "act" ? theme.brassBright : g.tone === "wait" ? theme.dim : theme.verdigris;
+    const glyph = g.tone === "act" ? "▸" : g.tone === "wait" ? "◴" : "✦";
+    return elem("div", [
+      "display:flex;gap:10px;align-items:flex-start", "padding:12px 14px",
+      `border-radius:${surface.radius.md}`, `background:${theme.bgDeep}`,
+      `border:1px solid ${theme.line}`, `border-left:3px solid ${accent}`, `box-shadow:${surface.elevation.sm}`,
+    ].join(";"), {
+      children: [
+        elem("div", `font-size:15px;line-height:1.25;color:${accent}`, { text: glyph }),
+        elem("div", "flex:1;min-width:0", { children: [
+          elem("div", `font-family:${typ.body};font-size:14px;font-weight:700;line-height:1.3;color:${theme.ink}`, { text: g.title }),
+          ...(g.detail ? [elem("div", `font-size:11.5px;color:${theme.dim};margin-top:3px;line-height:1.45`, { text: g.detail })] : []),
+        ] }),
+      ],
+    });
   }
 
   private renderLegions(v: GameStateView | null): void {
@@ -642,64 +713,22 @@ export class GameView {
       const land = legion && v.legions[legion] ? v.legions[legion]!.land : null;
       // Highlight a selected legion's legal destinations during Movement.
       const reach = legion ? new Set(reachableLands(v, this.session.focusedSeat, legion)) : new Set<number>();
-      this.board.render(v, land, null, reach);
+      this.board.render(v, land, null, reach, this.attentionLands(v));
     }
   }
-}
 
-/** In-hex hazard key for the battle legend — swatch colour + rules effect.
- *  Colours mirror the BattlelandRenderer's HAZARD_TINT. */
-const HAZARD_INFO: Record<string, { color: string; effect: string }> = {
-  Brambles: { color: "#6F7A37", effect: "non-natives stop on entry · +1 to hit a native here" },
-  Sand: { color: "#E2C079", effect: "slows non-native entry" },
-  Bog: { color: "#4C4733", effect: "only natives may enter" },
-  Drift: { color: "#CBD9DF", effect: "slows non-natives · chips non-native non-flyers each round" },
-  Tree: { color: "#2F4A2A", effect: "impassable · blocks line of sight" },
-  Volcano: { color: "#9A3A22", effect: "impassable · a Dragon striking out adds 2 dice" },
-  Tower: { color: "#8C8273", effect: "walled keep · defender deploys inside" },
-  Lake: { color: "#3E6B86", effect: "water" },
-  Stone: { color: "#7C7568", effect: "bare rock" },
-};
-
-/** Hexside feature key for the battle legend. */
-const BORDER_INFO: Record<string, { color: string; name: string; effect: string }> = {
-  w: { color: "#B08D57", name: "Wall", effect: "blocks non-flyers · +1 skill striking down across it" },
-  c: { color: "#15120F", name: "Cliff", effect: "blocks movement across this edge" },
-  s: { color: "#5E7A6B", name: "Slope", effect: "native +1 die down · non-native −1 skill up" },
-  d: { color: "#CBA86B", name: "Dune", effect: "native +2 dice down · non-native −1 die up" },
-  r: { color: "#4E86A6", name: "River", effect: "slows non-flying non-natives" },
-};
-
-/** A "MoveLegion" → "move legion" fallback when a command emits no event. */
-function humanizeType(t: string): string {
-  return t.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
-}
-
-/** One concise, scannable line per domain event. Returns "" for events that
- *  are noise in the log (phase changes show in the bar/inspector already). */
-function formatEvent(e: DomainEvent): string {
-  const a = e as unknown as Record<string, unknown>;
-  const pts = (n: unknown) => (Number(n) > 0 ? ` <b>+${n}</b>` : "");
-  switch (e.type) {
-    case "PhaseChanged": return "";
-    case "BattlePhaseAdvanced": return "";
-    case "TurnOrderRolled": return `turn order set`;
-    case "MovementRolled": return `rolled ${a.roll}${a.mulligan ? " (reroll)" : ""}`;
-    case "LegionMoved": return `${a.legionId} → ${a.to}${a.teleport ? " (teleport)" : ""}`;
-    case "LegionsRecombined": return `merged into ${a.into} @${a.land}`;
-    case "LegionSplit": return `split ${a.parentLegionId} → ${a.childLegionId}`;
-    case "CreatureRecruited": return `mustered @${a.land}${(a.revealed as string[])?.length ? ` (showed ${(a.revealed as string[]).join(", ")})` : ""}`;
-    case "CreatureAcquired": return `gained ${a.creature}`;
-    case "BattleJoined": return `battle @${a.land} · ${a.terrain}`;
-    case "StrikeResolved": return `${a.strikerId} → ${a.targetId}: ${a.hits} hit${Number(a.hits) === 1 ? "" : "s"}${a.carriedTo ? ` (carry)` : ""}`;
-    case "CombatantSlain": return `${a.creature} slain`;
-    case "AngelSummoned": return `summoned ${a.creature}`;
-    case "BattleReinforced": return `reinforced ${a.creature}`;
-    case "BattleConcluded": return `battle ${a.outcome}${a.winnerId ? ` · ${a.winnerId} wins` : ""}${pts(a.pointsAwarded)}${a.timeLoss ? " (time-loss)" : ""}`;
-    case "EngagementResolved": return `${a.outcome} @${a.land}${pts(a.pointsAwarded)}`;
-    case "MarkersInherited": return `inherited ${(a.markers as string[]).length} markers`;
-    case "PlayerEliminated": return `${a.playerId} eliminated`;
-    case "GameEnded": return `game over${a.winnerId ? ` · ${a.winnerId} wins` : ""}`;
-    default: return humanizeType(e.type);
+  /** Lands whose legions can still act THIS phase — ringed brass on the board
+   *  so "what do I click?" always has a visible answer. */
+  private attentionLands(v: GameStateView): Set<number> {
+    const out = new Set<number>();
+    if (!seatActsNow(v, this.session.focusedSeat)) return out;
+    const p = v.fsm.path;
+    for (const l of seatLegions(v, this.session.focusedSeat)) {
+      if (p.endsWith("Commencement") && l.height >= 4) out.add(l.land);
+      else if (p.endsWith("Movement") && !l.moved && l.destinations.length > 0) out.add(l.land);
+      else if (p.endsWith("Mustering") && !l.recruited && l.recruits.length > 0) out.add(l.land);
+    }
+    return out;
   }
 }
+

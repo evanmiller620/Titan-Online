@@ -1,35 +1,53 @@
 /**
- * Masterboard renderer (Titan client, render layer — the signature element).
+ * Masterboard renderer (Titan client, render layer) — the AUTHENTIC board.
  *
- * Draws the authentic 1980 masterboard: a regular hexagon of lands (the
- * (col,row) grid plotted directly) with black gaps between them, every legal
- * move shown as a colour-coded directional connector, and each land labelled
- * with its terrain name + number. The board is a pan/zoom WORLD so a player can
- * read any corner closely; hovering a land lights up its connections.
+ * Design goals:
+ *   - Look like the 1980 board: 96 truncated-triangle lands, alternately
+ *     pointing up and down, packed into one large hexagon on a dark field,
+ *     with the movement gates (arrows / arches / blocks) PAINTED at every
+ *     border exactly as printed — the board itself teaches the movement rules.
+ *   - Interaction states stay legible on top: a selected legion's land gets a
+ *     banner ring, its reachable lands glow, and lands that can act this phase
+ *     carry a brass "attention" ring so the player always knows where to look.
+ *   - A pan/zoom world so any corner can be read closely.
  *
- * Strict separation: this class READS a GameStateView and emits land-click /
+ * Strict separation: this class READS a GameStateView and emits land click /
  * hover events through callbacks. It never imports the store, never builds a
- * command, never mutates anything. The app layer wires its callbacks.
+ * command, never mutates anything.
  */
 
 import { Application, Container, Graphics, Rectangle, Text } from "pixi.js";
 import { MASTER_LANDS, type GameStateView } from "@titan/engine";
-import { colRowToPixel, fitColRowLayout, nearestLand, hexCornersFlat, type GridLayout, type Point } from "./projection.ts";
+import {
+  fitTriLayout, triCentroid, triLandPolygon, triPointsUp, nearestLand,
+  type TriLayout, type Point,
+} from "./projection.ts";
 import { palette, terrainColor, type as typ } from "../ui/tokens.ts";
 
 const LAND_CELLS = MASTER_LANDS.map((l) => ({ col: l.col, row: l.row }));
 const LAND_BY_ID = new Map(MASTER_LANDS.map((l) => [l.id, l]));
 
 const hex = (s: string) => parseInt(s.replace("#", ""), 16);
-const INK_DARK = "#1A1714";
-const INK_LIGHT = "#F4EEDF";
+const INK_DARK = "#15120E";
+const INK_LIGHT = "#F6F1E3";
+const GATE_FILL = "#F2EAD3"; // painted-cream gate glyphs, as on the physical board
+const TRUNC = 0.18; // corner-cut fraction — the classic near-triangular land shape
+const SCALE = 0.955; // shrink toward centroid → the dark seam between lands
 
+/** Owner banner colours for legion tokens. */
 const SLOT_BANNER: Record<string, string> = {
-  Black: "#26221E", Brown: "#6B4A2B", Blue: "#2C4A6B", Gold: "#B08D57", Green: "#3E6B45", Red: "#8E3247",
+  Black: "#2B2723", Brown: "#7A5631", Blue: "#345C86", Gold: "#C39A52", Green: "#3E6B45", Red: "#A23A4C",
 };
 
 function luminance(c: number): number {
   return 0.2126 * ((c >> 16) & 255) + 0.7152 * ((c >> 8) & 255) + 0.0722 * (c & 255);
+}
+
+/** Hover-ring colour by connector type (matches the rail legend). */
+function exitColor(type: string): number {
+  if (type === "BLOCK") return hex(palette.alarm);
+  if (type === "ARCH") return hex(palette.verdigris);
+  return hex(palette.brassBright);
 }
 
 export interface MasterboardCallbacks {
@@ -39,13 +57,13 @@ export interface MasterboardCallbacks {
 
 export class MasterboardRenderer {
   private readonly app: Application;
-  private readonly layer = new Container();   // screen-space event catcher
-  private readonly world = new Container();   // pan/zoom transform
-  private readonly base = new Container();     // board graphics (rebuilt on render)
-  private readonly overlay = new Container();  // hover highlight (cheap redraw)
+  private readonly layer = new Container(); // screen-space event catcher
+  private readonly world = new Container(); // pan/zoom transform
+  private readonly base = new Container();   // board tiles + gates (rebuilt on render)
+  private readonly overlay = new Container(); // hover detail (cheap redraw)
   private landPositions: ReadonlyArray<{ id: number; point: Point }> = [];
   private posById = new Map<number, Point>();
-  private layout: GridLayout;
+  private layout: TriLayout;
   private w: number;
   private h: number;
   private zoom = 1;
@@ -55,7 +73,7 @@ export class MasterboardRenderer {
     this.app = app;
     this.w = width;
     this.h = height;
-    this.layout = fitColRowLayout(LAND_CELLS, width, height, 16);
+    this.layout = fitTriLayout(LAND_CELLS, width, height, 18);
     this.world.addChild(this.base);
     this.world.addChild(this.overlay);
     this.layer.addChild(this.world);
@@ -64,7 +82,7 @@ export class MasterboardRenderer {
   }
 
   private precomputePositions(): void {
-    this.landPositions = MASTER_LANDS.map((l) => ({ id: l.id, point: colRowToPixel({ col: l.col, row: l.row }, this.layout) }));
+    this.landPositions = MASTER_LANDS.map((l) => ({ id: l.id, point: triCentroid(l, this.layout) }));
     this.posById = new Map(this.landPositions.map((lp) => [lp.id, lp.point]));
   }
 
@@ -72,16 +90,15 @@ export class MasterboardRenderer {
     this.layer.visible = visible;
   }
 
-  /** Reset pan/zoom to the fitted view. */
   resetView(): void {
     this.zoom = 1;
     this.world.scale.set(1);
     this.world.position.set(0, 0);
   }
 
-  /** Zoom by a factor toward the viewport centre (for on-screen +/- buttons). */
+  /** Zoom by a factor toward the viewport centre (for the on-screen +/− buttons). */
   zoomBy(factor: number): void {
-    const next = Math.max(0.7, Math.min(4, this.zoom * factor));
+    const next = clampZoom(this.zoom * factor);
     const f = next / this.zoom;
     const cx = this.w / 2, cy = this.h / 2;
     this.world.position.set(cx - f * (cx - this.world.x), cy - f * (cy - this.world.y));
@@ -92,7 +109,10 @@ export class MasterboardRenderer {
   attachInput(cb: MasterboardCallbacks): void {
     this.layer.eventMode = "static";
     this.layer.hitArea = new Rectangle(0, 0, this.w, this.h);
-    const hitR = () => this.cellRadius() * 1.25;
+    // Nearest-centroid picking is exact between edge-neighbours (the shared
+    // edge IS the bisector of their centroids); the cap only rejects misses
+    // outside the board.
+    const hitR = () => this.side() * 0.62;
 
     let dragStart: Point | null = null;
     let worldStart: Point | null = null;
@@ -110,7 +130,7 @@ export class MasterboardRenderer {
       if (dragStart && worldStart) {
         const dx = g.x - dragStart.x, dy = g.y - dragStart.y;
         moved = Math.hypot(dx, dy);
-        if (moved > 4) { // panning
+        if (moved > 4) {
           this.world.position.set(worldStart.x + dx, worldStart.y + dy);
           cb.onLandHover(null);
           this.setHover(null);
@@ -119,8 +139,7 @@ export class MasterboardRenderer {
       }
       const id = idAt(e);
       this.setHover(id);
-      const pt = id === null ? undefined : this.screenPointFor(id);
-      cb.onLandHover(id, pt);
+      cb.onLandHover(id, id === null ? undefined : this.screenPointFor(id));
     });
     const end = (e: unknown) => {
       if (dragStart && moved <= 4) {
@@ -130,19 +149,16 @@ export class MasterboardRenderer {
       dragStart = worldStart = null;
     };
     this.layer.on("pointerup", end);
-    this.layer.on("pointerupoutside", (e: unknown) => { end(e); });
+    this.layer.on("pointerupoutside", end);
     this.layer.on("pointerleave", () => { cb.onLandHover(null); this.setHover(null); });
 
-    // Wheel zoom toward the cursor.
     const canvas = this.app.canvas as HTMLCanvasElement;
     canvas.addEventListener("wheel", (ev: WheelEvent) => {
       if (!this.layer.visible) return;
       ev.preventDefault();
-      const factor = ev.deltaY < 0 ? 1.12 : 1 / 1.12;
-      const next = Math.max(0.7, Math.min(4, this.zoom * factor));
+      const next = clampZoom(this.zoom * (ev.deltaY < 0 ? 1.12 : 1 / 1.12));
       const f = next / this.zoom;
-      const cx = ev.offsetX, cy = ev.offsetY;
-      this.world.position.set(cx - f * (cx - this.world.x), cy - f * (cy - this.world.y));
+      this.world.position.set(ev.offsetX - f * (ev.offsetX - this.world.x), ev.offsetY - f * (ev.offsetY - this.world.y));
       this.zoom = next;
       this.world.scale.set(next);
     }, { passive: false });
@@ -155,218 +171,207 @@ export class MasterboardRenderer {
     if (w === this.w && h === this.h) return;
     this.w = w;
     this.h = h;
-    this.layout = fitColRowLayout(LAND_CELLS, w, h, 16);
+    this.layout = fitTriLayout(LAND_CELLS, w, h, 18);
     if (this.layer.hitArea instanceof Rectangle) { this.layer.hitArea.width = w; this.layer.hitArea.height = h; }
     this.precomputePositions();
   }
 
-  /** Re-draw the whole board from a redacted snapshot. Idempotent. */
+  /**
+   * Re-draw the whole board.
+   *   selectedLand    banner ring (the selected legion's land)
+   *   highlightLands  a selected legion's reachable set — lit while others dim
+   *   attentionLands  lands whose legions can act this phase — brass ring
+   */
   render(
     view: GameStateView,
     selectedLand: number | null,
     _hoveredLand: number | null,
     highlightLands: ReadonlySet<number> = new Set(),
+    attentionLands: ReadonlySet<number> = new Set(),
   ): void {
     this.syncExtent();
     this.base.removeChildren();
-    const r = this.cellRadius();
-    const highlighting = highlightLands.size > 0;
+    const s = this.side();
+    const focusing = highlightLands.size > 0;
 
-    // 1) Reachable halos behind everything.
-    if (highlighting) {
-      const halos = new Graphics();
-      for (const id of highlightLands) {
-        const c = this.posById.get(id);
-        if (c) halos.poly(hexPoly(c, r + 4)).fill({ color: hex(palette.verdigris), alpha: 0.16 }).stroke({ color: hex(palette.verdigris), width: 3, alpha: 0.95 });
-      }
-      this.base.addChild(halos);
-    }
+    const legionsByLand = groupLegions(view);
 
-    // 2) Land hex bodies (fills + rims) — drawn BEFORE the connectors so the
-    //    directional arrows sit ON TOP and are never hidden behind a node.
+    // Pass 1 — land tiles.
     for (const land of MASTER_LANDS) {
-      const c = this.posById.get(land.id)!;
-      const fill = hex(terrainColor[land.terrain] ?? terrainColor.Plains!);
-      const isTower = land.terrain === "Tower";
       const isSel = land.id === selectedLand;
-      const isTarget = highlightLands.has(land.id);
-      const dim = highlighting && !isTarget && !isSel;
-
-      const g = new Graphics();
-      g.poly(hexPoly(c, r))
-        .fill({ color: fill, alpha: dim ? 0.3 : 1 })
-        .stroke({
-          color: isSel ? hex(palette.oxbloodBright) : isTarget ? hex(palette.verdigris) : isTower ? hex(palette.brass) : hex("#211E1A"),
-          width: isSel ? 4 : isTarget ? 3 : isTower ? 2.5 : 1.5,
-          alpha: dim ? 0.5 : 1,
-        });
-      this.base.addChild(g);
+      const isReach = highlightLands.has(land.id);
+      const dim = focusing && !isReach && !isSel;
+      this.drawTile(land, s, { dim, selected: isSel, reachable: isReach, attention: attentionLands.has(land.id) });
     }
 
-    // 3) Small per-hexside direction markers — an always-on, calm map of how the
-    //    wheel connects, like the printed Titan board: a TRIANGLE means "track,
-    //    move this way", a ROUNDED SQUARE is a gateway/cross-link, a SQUARE is a
-    //    forced block. Hovering a land still pops bold arrows for detail.
-    this.drawEdgeMarkers(r, highlighting, selectedLand, highlightLands);
-
-    // 4) Labels + number pills last, so they stay crisp above the arrows.
+    // Pass 2 — the painted gates, on top of every tile so they never get buried.
+    const gates = new Graphics();
     for (const land of MASTER_LANDS) {
-      const c = this.posById.get(land.id)!;
-      const fill = hex(terrainColor[land.terrain] ?? terrainColor.Plains!);
-      const isSel = land.id === selectedLand;
-      const isTarget = highlightLands.has(land.id);
-      const dim = highlighting && !isTarget && !isSel;
-      this.drawLabel(land.terrain, land.id, c, r, fill, dim);
-    }
-
-    // 4) Legion seals (grouped per land, fanned so stacks all show).
-    const byLand = new Map<number, GameStateView["legions"][string][]>();
-    for (const legion of Object.values(view.legions)) {
-      const arr = byLand.get(legion.land) ?? [];
-      arr.push(legion);
-      byLand.set(legion.land, arr);
-    }
-    for (const [land, legs] of byLand) {
-      const c = this.posById.get(land);
-      if (!c) continue;
-      const n = legs.length;
-      const sr = n > 1 ? r * 0.34 : r * 0.4;
-      legs.forEach((legion, i) => {
-        const color = (view.players[legion.ownerId] as { color?: string } | undefined)?.color ?? null;
-        const pos = n === 1 ? { x: c.x, y: c.y + r * 0.4 } : fanAround(c, r * 0.46, i, n, r * 0.4);
-        this.drawSeal(pos.x, pos.y, legion, sr, color);
-      });
-    }
-
-    this.renderOverlay(r); // keep hover highlight in sync after a rebuild
-  }
-
-  /** Always-on per-hexside direction markers (the printed-board flow key): each
-   *  exit is a small symbol on the rim of its land, offset to the RIGHT of travel
-   *  (Titan convention) so opposing one-ways never collide. Shape encodes type;
-   *  a selected legion's land stays bold while the rest dim. */
-  private drawEdgeMarkers(r: number, highlighting: boolean, selectedLand: number | null, highlight: ReadonlySet<number>): void {
-    const g = new Graphics();
-    for (const land of MASTER_LANDS) {
-      const A = this.posById.get(land.id);
-      if (!A) continue;
-      const isSel = land.id === selectedLand;
-      const dim = highlighting && !isSel && !highlight.has(land.id);
+      const dim = focusing && !highlightLands.has(land.id) && land.id !== selectedLand;
+      const A = this.posById.get(land.id)!;
       for (const ex of land.exits) {
         const B = this.posById.get(ex.to);
-        if (!B) continue;
-        const kind = edgeKind(ex.type);
-        const color = hex(kind === "block" ? palette.alarm : kind === "gateway" ? palette.verdigris : palette.brassBright);
-        const dx = B.x - A.x, dy = B.y - A.y;
-        const len = Math.hypot(dx, dy) || 1;
-        const ux = dx / len, uy = dy / len;
-        const rx = uy, ry = -ux; // right-of-travel (screen y-down)
-        const along = r * 0.72, off = r * 0.22;
-        const mx = A.x + ux * along + rx * off;
-        const my = A.y + uy * along + ry * off;
-        const sz = r * (isSel ? 0.24 : 0.19);
-        const alpha = dim ? 0.16 : isSel ? 1 : 0.9;
-        drawMarker(g, mx, my, ux, uy, kind, color, alpha, sz);
+        if (B) drawGate(gates, ex.type, A, B, s, dim ? 0.25 : 1);
       }
+    }
+    this.base.addChild(gates);
+
+    // Pass 3 — legion tokens above the gates.
+    for (const land of MASTER_LANDS) {
+      const legs = legionsByLand.get(land.id);
+      if (!legs) continue;
+      const dim = focusing && !highlightLands.has(land.id) && land.id !== selectedLand;
+      this.drawLegionTokens(land, s, legs, view, dim);
+    }
+
+    this.renderOverlay(s);
+  }
+
+  /** One land: truncated-triangle tile, terrain fill, name + number, state rings. */
+  private drawTile(
+    land: (typeof MASTER_LANDS)[number],
+    s: number,
+    st: { dim: boolean; selected: boolean; reachable: boolean; attention: boolean },
+  ): void {
+    const fill = hex(terrainColor[land.terrain] ?? terrainColor.Plains!);
+    const isTower = land.terrain === "Tower";
+    const c = this.posById.get(land.id)!;
+    const poly = flat(triLandPolygon(land, this.layout, TRUNC, SCALE));
+
+    const g = new Graphics();
+    g.poly(poly)
+      .fill({ color: fill, alpha: st.dim ? 0.28 : 1 })
+      .stroke({ color: hex(isTower ? palette.brassBright : "#241F19"), width: isTower ? 2.5 : 1.25, alpha: st.dim ? 0.4 : 1 });
+    // State rings, drawn just inside the land's own border.
+    const ringPoly = flat(triLandPolygon(land, this.layout, TRUNC, SCALE * 0.94));
+    if (st.selected) {
+      g.poly(ringPoly).stroke({ color: hex(palette.oxbloodBright), width: 4 });
+    } else if (st.reachable) {
+      g.poly(poly).fill({ color: hex(palette.verdigris), alpha: 0.18 });
+      g.poly(ringPoly).stroke({ color: hex(palette.verdigris), width: 3.5 });
+    } else if (st.attention && !st.dim) {
+      g.poly(ringPoly).stroke({ color: hex(palette.brassBright), width: 2.5, alpha: 0.9 });
+    }
+    this.base.addChild(g);
+
+    const dark = luminance(fill) > 150;
+    const ink = hex(st.dim ? (dark ? "#6B655B" : "#B7AE9C") : (dark ? INK_DARK : INK_LIGHT));
+    const halo = hex(dark ? INK_LIGHT : INK_DARK);
+    const up = triPointsUp(land);
+    const toBase = up ? 1 : -1; // unit direction (screen-y) from centroid toward the wide base side
+
+    // Text stack sits slightly toward the apex; tokens own the wide base side.
+    const nameY = c.y - toBase * s * 0.155;
+    const numY = c.y + toBase * s * 0.01;
+
+    const name = new Text({
+      text: land.terrain.toUpperCase(),
+      style: {
+        fontFamily: typ.body, fontSize: Math.max(7, Math.round(s * 0.072)), fontWeight: "700", letterSpacing: 0.4,
+        fill: ink, stroke: { color: halo, width: Math.max(1, s * 0.012) },
+      },
+    });
+    name.anchor.set(0.5);
+    name.x = c.x; name.y = nameY;
+    name.alpha = st.dim ? 0.5 : 1;
+    this.base.addChild(name);
+
+    const num = new Text({
+      text: String(land.id),
+      style: {
+        fontFamily: typ.mono, fontSize: Math.max(10, Math.round(s * 0.13)), fontWeight: "700",
+        fill: ink, stroke: { color: halo, width: Math.max(1.5, s * 0.02) },
+      },
+    });
+    num.anchor.set(0.5);
+    num.x = c.x; num.y = numY;
+    num.alpha = st.dim ? 0.5 : 1;
+    this.base.addChild(num);
+
+    if (isTower) this.drawTowerIcon(c, s, toBase, st.dim);
+  }
+
+  /** The little castle silhouette a Tower land carries on the printed board. */
+  private drawTowerIcon(c: Point, s: number, toBase: number, dim: boolean): void {
+    const y = c.y + toBase * s * 0.235; // on the wide side, opposite the text
+    const w = s * 0.17, h = s * 0.13;
+    const g = new Graphics();
+    g.rect(c.x - w / 2, y - h / 2, w, h).fill({ color: hex(INK_DARK), alpha: dim ? 0.35 : 0.9 });
+    const mw = w / 5;
+    for (let i = 0; i < 3; i++) {
+      g.rect(c.x - w / 2 + (2 * i) * mw, y - h / 2 - mw, mw, mw).fill({ color: hex(INK_DARK), alpha: dim ? 0.35 : 0.9 });
     }
     this.base.addChild(g);
   }
 
-  /** Terrain name (haloed for legibility on any tint) + a number pill. */
-  private drawLabel(terrain: string, id: number, c: Point, r: number, fill: number, dim: boolean): void {
-    const dark = luminance(fill) > 150;
-    const inkName = dark ? INK_DARK : INK_LIGHT;
-    const halo = dark ? INK_LIGHT : INK_DARK;
-    const name = new Text({
-      text: terrain.toUpperCase(),
-      style: {
-        fontFamily: typ.body, fontSize: Math.max(10, Math.round(r * 0.34)), fontWeight: "700",
-        letterSpacing: 0.6, fill: hex(inkName),
-        stroke: { color: hex(halo), width: Math.max(2, r * 0.085) },
-      },
+  /** Legion tokens: owner-coloured discs along the land's wide (base) side. */
+  private drawLegionTokens(
+    land: (typeof MASTER_LANDS)[number],
+    s: number,
+    legs: GameStateView["legions"][string][],
+    view: GameStateView,
+    dim: boolean,
+  ): void {
+    const c = this.posById.get(land.id)!;
+    const up = triPointsUp(land);
+    const n = legs.length;
+    const tr = Math.min(s * 0.105, s * 0.26 / Math.max(1, n));
+    const gap = tr * 2.25;
+    const y = c.y + (up ? 1 : -1) * s * 0.205;
+    const x0 = c.x - (gap * (n - 1)) / 2;
+    legs.forEach((legion, i) => {
+      const owner = (view.players[legion.ownerId] as { color?: string } | undefined)?.color ?? null;
+      const col = (owner && SLOT_BANNER[owner]) || palette.seal;
+      const x = x0 + i * gap;
+      const g = new Graphics();
+      g.circle(x + tr * 0.1, y + tr * 0.14, tr).fill({ color: hex("#000000"), alpha: dim ? 0.1 : 0.3 });
+      g.circle(x, y, tr).fill({ color: hex(col), alpha: dim ? 0.4 : 1 }).stroke({ color: hex(palette.vellum), width: Math.max(1, tr * 0.16), alpha: dim ? 0.4 : 1 });
+      this.base.addChild(g);
+      const t = new Text({
+        text: String(legion.height),
+        style: { fontFamily: typ.mono, fontSize: Math.max(8, tr * 1.05), fontWeight: "700", fill: hex(palette.vellum) },
+      });
+      t.anchor.set(0.5); t.x = x; t.y = y; t.alpha = dim ? 0.5 : 1;
+      this.base.addChild(t);
     });
-    name.anchor.set(0.5);
-    name.x = c.x;
-    name.y = c.y + r * 0.08;
-    name.alpha = dim ? 0.35 : 1;
-    this.base.addChild(name);
-
-    // Number pill at the top of the hex — dark chip, light text, always legible.
-    const fs = Math.max(9, Math.round(r * 0.28));
-    const num = new Text({ text: String(id), style: { fontFamily: typ.mono, fontSize: fs, fontWeight: "700", fill: hex(INK_LIGHT) } });
-    num.anchor.set(0.5);
-    const pw = num.width + r * 0.32, ph = fs + r * 0.16, py = c.y - r * 0.52;
-    const pill = new Graphics();
-    pill.roundRect(c.x - pw / 2, py - ph / 2, pw, ph, ph / 2)
-      .fill({ color: hex("#15120F"), alpha: dim ? 0.35 : 0.9 })
-      .stroke({ color: hex(palette.brass), width: 1, alpha: dim ? 0.2 : 0.6 });
-    pill.alpha = dim ? 0.5 : 1;
-    num.x = c.x; num.y = py; num.alpha = dim ? 0.5 : 1;
-    this.base.addChild(pill);
-    this.base.addChild(num);
   }
 
-  /** Light a land's connections + ring on hover, without rebuilding the board. */
+  // --- hover detail (overlay layer) -----------------------------------------
+
   private setHover(id: number | null): void {
     if (id === this.hoverId) return;
     this.hoverId = id;
-    this.renderOverlay(this.cellRadius());
+    this.renderOverlay(this.side());
   }
 
-  private renderOverlay(r: number): void {
+  /** On hover, outline the hovered land and ring each land its exits reach,
+   *  coloured by exit type. The painted gates already show direction; this
+   *  simply answers "where can this land go?" at a glance. */
+  private renderOverlay(s: number): void {
     this.overlay.removeChildren();
     const id = this.hoverId;
     if (id === null) return;
-    const A = this.posById.get(id);
-    if (!A) return;
     const land = LAND_BY_ID.get(id);
+    if (!land) return;
+
     const g = new Graphics();
-    // Outgoing edges, bright + bold — and ring each place you may actually move
-    // to, so "where can I go from here" is answered at a glance.
-    for (const ex of land?.exits ?? []) {
-      const B = this.posById.get(ex.to);
-      if (!B) continue;
-      const kind = edgeKind(ex.type);
-      const color = hex(kind === "block" ? palette.alarm : kind === "gateway" ? palette.verdigris : palette.brassBright);
-      connector(g, A, B, r, color, 0.98, kind, 3.4);
-      // Ring every reachable destination — including a block (a forced exit you
-      // must take when starting here) — so "where can I go" reads at a glance.
-      g.poly(hexPoly(B, r + 2)).stroke({ color, width: 2.4, alpha: 0.9 });
+    for (const ex of land.exits) {
+      const to = LAND_BY_ID.get(ex.to);
+      if (!to) continue;
+      g.poly(flat(triLandPolygon(to, this.layout, TRUNC, SCALE))).stroke({ color: exitColor(ex.type), width: 3, alpha: 0.95 });
     }
-    // Ring on the hovered land.
-    g.poly(hexPoly(A, r + 3)).stroke({ color: hex(palette.brassBright), width: 3.5, alpha: 0.98 });
+    g.poly(flat(triLandPolygon(land, this.layout, TRUNC, SCALE))).stroke({ color: hex(palette.brassBright), width: 3.5, alpha: 0.98 });
     this.overlay.addChild(g);
+    void s;
   }
 
-  private drawSeal(sx: number, sy: number, legion: GameStateView["legions"][string], sr: number, bannerColor: string | null): void {
-    const color = (bannerColor && SLOT_BANNER[bannerColor]) || palette.seal;
-    const seal = new Graphics();
-    // Soft drop shadow so seals lift off the parchment.
-    seal.circle(sx + sr * 0.12, sy + sr * 0.16, sr).fill({ color: hex("#000000"), alpha: 0.28 });
-    // Wax disc with a double rim (vellum outer, brass inner) — reads as a seal.
-    seal.circle(sx, sy, sr).fill({ color: hex(color), alpha: 0.97 })
-      .stroke({ color: hex(palette.vellum), width: Math.max(1.5, sr * 0.12) });
-    seal.circle(sx, sy, sr * 0.78).stroke({ color: hex(palette.brassBright), width: Math.max(0.8, sr * 0.06), alpha: 0.55 });
-    this.base.addChild(seal);
+  // --- geometry helpers ------------------------------------------------------
 
-    // Height as a legible number in the centre — far easier to read than pips,
-    // especially for tall stacks.
-    const fs = Math.max(9, Math.round(sr * 1.05));
-    const label = new Text({
-      text: String(legion.height),
-      style: { fontFamily: typ.mono, fontSize: fs, fontWeight: "700", fill: hex(palette.vellum), stroke: { color: hex("#1A1714"), width: Math.max(1, sr * 0.08) } },
-    });
-    label.anchor.set(0.5);
-    label.x = sx;
-    label.y = sy;
-    this.base.addChild(label);
+  /** Side length of a full (untruncated) land triangle — the board's scale unit. */
+  private side(): number {
+    return this.layout.side;
   }
 
-  private cellRadius(): number {
-    return this.layout.size;
-  }
-
-  /** Screen position of a land centre (for placing the DOM tooltip). */
   private screenPointFor(id: number): Point | undefined {
     const c = this.posById.get(id);
     if (!c) return undefined;
@@ -374,107 +379,99 @@ export class MasterboardRenderer {
   }
 
   private localPoint(e: unknown): Point {
-    const g = (e as { global?: { x: number; y: number } }).global;
-    if (!g) return { x: 0, y: 0 };
-    const p = this.world.toLocal({ x: g.x, y: g.y } as never) as { x: number; y: number };
+    const gp = (e as { global?: { x: number; y: number } }).global;
+    if (!gp) return { x: 0, y: 0 };
+    const p = this.world.toLocal({ x: gp.x, y: gp.y } as never) as { x: number; y: number };
     return { x: p.x, y: p.y };
   }
 }
 
-/** Flat-top hexagon polygon (flattened x,y pairs) for a land cell. */
-function hexPoly(center: Point, size: number): number[] {
-  const pts: number[] = [];
-  for (const c of hexCornersFlat(center, size)) pts.push(c.x, c.y);
-  return pts;
+function clampZoom(z: number): number {
+  return Math.max(0.7, Math.min(4, z));
 }
 
-/** A small hexside direction marker (printed-board flow key):
- *   track   → filled TRIANGLE pointing outward ("move this way")
- *   gateway → ROUNDED SQUARE ("a gateway / cross-link")
- *   block   → SQUARE ("a forced one-way block")
- * Each gets a dark halo so it stays legible over any terrain tint. */
-function drawMarker(g: Graphics, x: number, y: number, ux: number, uy: number, kind: EdgeKind, color: number, alpha: number, sz: number): void {
-  const px = -uy, py = ux;
-  const halo = hex("#15120F");
-  const haloA = Math.min(1, alpha * 1.05);
-  if (kind === "track") {
-    const tip = { x: x + ux * sz, y: y + uy * sz };
-    const back = { x: x - ux * sz * 0.5, y: y - uy * sz * 0.5 };
-    const w = sz * 0.78;
-    const tri = (pad: number): number[] => [
-      tip.x + ux * pad, tip.y + uy * pad,
-      back.x + px * (w + pad), back.y + py * (w + pad),
-      back.x - px * (w + pad), back.y - py * (w + pad),
-    ];
-    g.poly(tri(sz * 0.22)).fill({ color: halo, alpha: haloA });
-    g.poly(tri(0)).fill({ color, alpha });
-  } else if (kind === "gateway") {
-    const s = sz * 0.82;
-    g.roundRect(x - s - 1.2, y - s - 1.2, (s + 1.2) * 2, (s + 1.2) * 2, s * 0.7).fill({ color: halo, alpha: haloA });
-    g.roundRect(x - s, y - s, s * 2, s * 2, s * 0.6).fill({ color, alpha });
-  } else {
-    const s = sz * 0.74;
-    g.rect(x - s - 1.2, y - s - 1.2, (s + 1.2) * 2, (s + 1.2) * 2).fill({ color: halo, alpha: haloA });
-    g.rect(x - s, y - s, s * 2, s * 2).fill({ color, alpha });
+/** Flatten Points to the number[] Pixi's poly() wants. */
+function flat(pts: readonly Point[]): number[] {
+  const out: number[] = [];
+  for (const p of pts) { out.push(p.x, p.y); }
+  return out;
+}
+
+/** Group legions by the land they sit on. */
+function groupLegions(view: GameStateView): Map<number, GameStateView["legions"][string][]> {
+  const byLand = new Map<number, GameStateView["legions"][string][]>();
+  for (const legion of Object.values(view.legions)) {
+    const arr = byLand.get(legion.land) ?? [];
+    arr.push(legion);
+    byLand.set(legion.land, arr);
   }
+  return byLand;
 }
 
-/** How an edge reads: a one-way track, a passable gateway, or a forced exit. */
-type EdgeKind = "track" | "gateway" | "block";
+// ---------------------------------------------------------------------------
+// The painted gates — drawn once per exit, exactly as the physical board
+// prints them at the border between two lands:
+//   ARROWS  three chevrons abreast     — a track: the normal forward flow
+//   ARROW   one chevron                — tower / summit connector
+//   ARCH    a cream archway            — a gateway you may pass or stop through
+//   BLOCK   a solid bar                — one-way: exit only, no entry this side
+// Each glyph sits just inside the DESTINATION land at the shared edge and
+// points along the direction of travel, so two-way connectors never overlap.
+// ---------------------------------------------------------------------------
 
-/** Classify a board exit type into its visual kind. */
-function edgeKind(type: string): EdgeKind {
-  if (type === "BLOCK") return "block";
-  if (type === "ARCH") return "gateway";
-  return "track"; // ARROW / ARROWS — the painted directional flow
-}
-
-/**
- * A connector from A toward B, drawn so DIRECTION is unmistakable.
- *
- *   track    solid line + a filled arrowhead AT B's doorstep → you may move here.
- *   gateway  solid line + a hollow (outlined) arrowhead → a passable gateway.
- *   block    solid line + filled arrowhead + a barred "gate" at the SOURCE → a
- *            FORCED exit: a legion beginning its move on A must leave this way.
- *
- * Placing the arrowhead at the destination (not mid-line) means each land's
- * exits clearly point at where a legion can go next.
- */
-function connector(g: Graphics, A: Point, B: Point, r: number, color: number, alpha: number, kind: EdgeKind, width: number): void {
-  const dx = B.x - A.x, dy = B.y - A.y;
+function drawGate(g: Graphics, type: string, from: Point, to: Point, s: number, alpha: number): void {
+  // The midpoint of the two centroids lies ON the shared edge (both centroids
+  // are the triangle inradius from it, mirror-imaged).
+  const mx = (from.x + to.x) / 2, my = (from.y + to.y) / 2;
+  const dx = to.x - from.x, dy = to.y - from.y;
   const len = Math.hypot(dx, dy) || 1;
-  const ux = dx / len, uy = dy / len;
-  const px = -uy, py = ux;
-  const a = { x: A.x + ux * r * 0.98, y: A.y + uy * r * 0.98 };
-  const b = { x: B.x - ux * r * 0.86, y: B.y - uy * r * 0.86 }; // tip just inside B's edge
+  const ux = dx / len, uy = dy / len;   // direction of travel
+  const px = -uy, py = ux;              // along the edge
+  const inset = s * 0.075;              // glyph centre, just inside the destination
+  const cx = mx + ux * inset, cy = my + uy * inset;
 
-  // A thin connecting shaft (faint — it just ties the two lands together).
-  g.moveTo(a.x, a.y).lineTo(b.x, b.y).stroke({ color, width, alpha: alpha * 0.35, cap: "round" });
+  const fill = hex(GATE_FILL);
+  const line = hex(INK_DARK);
 
-  // The arrowhead carries the direction, so make it BOLD and give it a dark halo
-  // so it stays legible over any terrain tint. Tip sits at B's doorstep.
-  const headLen = r * 0.46, headW = r * 0.32;
-  const baseC = { x: b.x - ux * headLen, y: b.y - uy * headLen };
-  const tri = (wpad: number, tipExtend: number): number[] => [
-    b.x + ux * tipExtend, b.y + uy * tipExtend,
-    baseC.x + px * (headW + wpad), baseC.y + py * (headW + wpad),
-    baseC.x - px * (headW + wpad), baseC.y - py * (headW + wpad),
-  ];
-  g.poly(tri(r * 0.07, r * 0.05)).fill({ color: hex("#15120F"), alpha: Math.min(1, alpha * 1.1) }); // halo
-  g.poly(tri(0, 0)).fill({ color, alpha });
-
-  if (kind === "block") {
-    // Forced exit: a bar across the source mouth marking the move as mandatory.
-    const s = r * 0.28;
-    g.moveTo(a.x - px * s, a.y - py * s).lineTo(a.x + px * s, a.y + py * s)
-      .stroke({ color, width: width * 1.8, alpha, cap: "round" });
+  if (type === "BLOCK") {
+    const hw = s * 0.115, hh = s * 0.028;
+    g.poly([
+      cx - px * hw - ux * hh, cy - py * hw - uy * hh,
+      cx + px * hw - ux * hh, cy + py * hw - uy * hh,
+      cx + px * hw + ux * hh, cy + py * hw + uy * hh,
+      cx - px * hw + ux * hh, cy - py * hw + uy * hh,
+    ]).fill({ color: fill, alpha }).stroke({ color: line, width: 1, alpha });
+    return;
   }
-}
 
-/** The i-th of n seals fanned in an arc below the land centre. */
-function fanAround(center: Point, radius: number, i: number, n: number, yOffset: number): Point {
-  if (n <= 1) return { x: center.x, y: center.y + yOffset };
-  const spread = Math.PI * 0.8;
-  const a = Math.PI / 2 - spread / 2 + (spread * i) / (n - 1);
-  return { x: center.x + Math.cos(a) * radius, y: center.y + yOffset + Math.sin(a) * radius * 0.5 };
+  if (type === "ARCH") {
+    // A little archway: a half-disc whose rounded top bulges along travel,
+    // built point-by-point so the bulge side never flips with orientation.
+    const r = s * 0.085;
+    const pts: number[] = [];
+    for (let i = 0; i <= 12; i++) {
+      const th = Math.PI * (i / 12); // +edge → +travel → −edge
+      const bx = px * Math.cos(th) + ux * Math.sin(th);
+      const by = py * Math.cos(th) + uy * Math.sin(th);
+      pts.push(cx + bx * r, cy + by * r);
+    }
+    // Flat base slightly behind the edge, closing the arch.
+    pts.push(cx - px * r - ux * r * 0.5, cy - py * r - uy * r * 0.5);
+    pts.push(cx + px * r - ux * r * 0.5, cy + py * r - uy * r * 0.5);
+    g.poly(pts).fill({ color: fill, alpha: alpha * 0.95 }).stroke({ color: line, width: 1, alpha });
+    return;
+  }
+
+  const count = type === "ARROWS" ? 3 : 1;
+  const spacing = s * 0.105;
+  const l = s * 0.085, w = s * 0.062; // arrowhead length / half-width
+  for (let i = 0; i < count; i++) {
+    const off = (i - (count - 1) / 2) * spacing;
+    const ax = cx + px * off, ay = cy + py * off;
+    g.poly([
+      ax + ux * l, ay + uy * l,
+      ax - ux * l * 0.4 + px * w, ay - uy * l * 0.4 + py * w,
+      ax - ux * l * 0.4 - px * w, ay - uy * l * 0.4 - py * w,
+    ]).fill({ color: fill, alpha }).stroke({ color: line, width: 1, alpha });
+  }
 }

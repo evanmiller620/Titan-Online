@@ -128,39 +128,41 @@ export function fitHexLayout(cubes: readonly CubeCoord[], width: number, height:
 // ---------------------------------------------------------------------------
 // Masterboard layout — the AUTHENTIC board geometry.
 //
-// The masterboard is NOT a sheared hex tessellation: it is a solid hexagonal
-// honeycomb of 96 lands whose (col,row) grid, plotted DIRECTLY (no odd-q
-// shear), reproduces the original 1980 board — a regular hexagon with the
-// six towers at its vertices and the Mountains/Tundra summit at its centre.
-// Insetting each hex opens the black gaps between lands. Cube coords (used by
-// the battle board) would shear this into a lopsided blob, so the masterboard
-// uses its own simple grid projection here.
+// The 1980 masterboard is a TRIANGULAR tessellation, not a honeycomb: the 96
+// lands are equilateral triangles with truncated corners, alternately pointing
+// up and down, packed into one large hexagon with the six Towers at its
+// vertices and the Mountains/Tundra summit at its centre. On the Colossus
+// (col,row) grid this falls out directly:
+//   - the column step is HALF a land's base (neighbouring columns interlock),
+//   - the row step is a land's full height,
+//   - a land points UP when (col+row) is odd, DOWN when even (forced by the
+//     exit graph: every directed exit must cross a shared edge).
+// Corner truncation turns each triangle into the classic near-triangular
+// hexagon and opens the small diamond gaps where lands meet.
 // ---------------------------------------------------------------------------
 
-export interface GridLayout {
-  /** Pixel step per column / row. */
-  readonly sx: number;
-  readonly sy: number;
-  /** Hex radius (inset below the grid step so gaps show). */
-  readonly size: number;
-  /** Pixel position that grid (0,0) maps to. */
+export interface TriLayout {
+  /** Horizontal pixel step per column — half a land's base. */
+  readonly colStep: number;
+  /** Vertical pixel step per row — a land's full height. */
+  readonly rowStep: number;
+  /** Side length of the (untruncated) triangular land, in px. */
+  readonly side: number;
+  /** Pixel that column 0's centreline / row 0's top edge map to. */
   readonly origin: Point;
 }
 
 export interface GridCell { readonly col: number; readonly row: number }
 
-/** Fit the (col,row) grid of `cells` into width×height (minus margin), centred,
- *  with hexes inset so the board reads as a hexagon of separated lands.
- *
- *  The lands are flat-top hexes on a near-square lattice (the authentic Titan
- *  wheel: 15 columns × 8 rows). Earlier this stretched the column and row steps
- *  to the viewport INDEPENDENTLY — because the grid is far wider than tall, the
- *  row step ballooned and opened wide empty channels between rows. We now derive
- *  ONE hex radius that fits both axes and use an equal centre-to-centre step on
- *  both, so rows pack as tightly as columns and each land is as large as the
- *  space allows. A flat-top hex spans 2·r wide and √3·r tall; STEP past those
- *  leaves a thin, even seam. */
-export function fitColRowLayout(cells: readonly GridCell[], width: number, height: number, margin: number): GridLayout {
+/** Whether a land's triangle points up (apex on top). Forced by the exit
+ *  graph: vertically adjacent lands share a horizontal edge only when the
+ *  upper one points up and the lower one points down. */
+export function triPointsUp(cell: GridCell): boolean {
+  return ((cell.col + cell.row) & 1) === 1;
+}
+
+/** Fit the triangular land grid into width×height (minus margin), centred. */
+export function fitTriLayout(cells: readonly GridCell[], width: number, height: number, margin: number): TriLayout {
   let minC = Infinity, maxC = -Infinity, minR = Infinity, maxR = -Infinity;
   for (const c of cells) {
     if (c.col < minC) minC = c.col;
@@ -170,23 +172,45 @@ export function fitColRowLayout(cells: readonly GridCell[], width: number, heigh
   }
   const spanC = (maxC - minC) || 1;
   const spanR = (maxR - minR) || 1;
-  const STEP = 2.16; // centre-to-centre in hex radii — larger, more readable hexes;
-  //                    arrows draw on top so they stay visible despite the tighter seam.
-  // Largest radius that fits each axis (board spans spanC·STEP·r + 2r wide,
-  // spanR·STEP·r + √3·r tall), then take the binding one.
-  const sizeW = (width - 2 * margin) / (spanC * STEP + 2);
-  const sizeH = (height - 2 * margin) / (spanR * STEP + SQRT3);
-  const size = Math.max(1, Math.min(sizeW, sizeH));
-  const sx = size * STEP;
-  const sy = size * STEP;
+  // Width: centres span spanC half-bases, plus half a base each side.
+  // Height: (spanR + 1) triangle heights of side·√3/2 each.
+  const sideW = (width - 2 * margin) / (spanC / 2 + 1);
+  const sideH = (height - 2 * margin) / ((spanR + 1) * (SQRT3 / 2));
+  const side = Math.max(1, Math.min(sideW, sideH));
+  const colStep = side / 2;
+  const rowStep = side * (SQRT3 / 2);
   const cx = (minC + maxC) / 2;
-  const cy = (minR + maxR) / 2;
-  return { sx, sy, size, origin: { x: width / 2 - sx * cx, y: height / 2 - sy * cy } };
+  const cy = (minR + maxR + 1) / 2; // rows occupy [minR, maxR+1] in rowTop units
+  return { colStep, rowStep, side, origin: { x: width / 2 - colStep * cx, y: height / 2 - rowStep * cy } };
 }
 
-/** Project a (col,row) cell to its pixel centre under a GridLayout. */
-export function colRowToPixel(cell: GridCell, layout: GridLayout): Point {
-  return { x: layout.origin.x + cell.col * layout.sx, y: layout.origin.y + cell.row * layout.sy };
+/** A land's centroid — the anchor for hit-testing, labels and gate rays. */
+export function triCentroid(cell: GridCell, layout: TriLayout): Point {
+  const x = layout.origin.x + cell.col * layout.colStep;
+  const top = layout.origin.y + cell.row * layout.rowStep;
+  const third = layout.rowStep / 3;
+  return { x, y: top + (triPointsUp(cell) ? 2 : 1) * third };
+}
+
+/**
+ * The land's polygon: its equilateral triangle scaled about the centroid by
+ * `scale` (opens the dark seam between lands) with each corner cut at fraction
+ * `trunc` of the side — the classic Titan land shape. Returned as corner
+ * points in drawing order.
+ */
+export function triLandPolygon(cell: GridCell, layout: TriLayout, trunc: number, scale: number): Point[] {
+  const up = triPointsUp(cell);
+  const x = layout.origin.x + cell.col * layout.colStep;
+  const top = layout.origin.y + cell.row * layout.rowStep;
+  const bot = top + layout.rowStep;
+  const half = layout.side / 2;
+  const c = triCentroid(cell, layout);
+  const sh = (p: Point): Point => ({ x: c.x + (p.x - c.x) * scale, y: c.y + (p.y - c.y) * scale });
+  const A = sh(up ? { x, y: top } : { x, y: bot });        // apex
+  const B = sh({ x: x - half, y: up ? bot : top });        // base left
+  const C = sh({ x: x + half, y: up ? bot : top });        // base right
+  const lerp = (p: Point, q: Point, t: number): Point => ({ x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t });
+  return [lerp(A, B, trunc), lerp(B, A, trunc), lerp(B, C, trunc), lerp(C, B, trunc), lerp(C, A, trunc), lerp(A, C, trunc)];
 }
 
 /** Distance between two points (for nearest-land hit testing on the wheel). */
